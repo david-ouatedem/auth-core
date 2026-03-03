@@ -33,6 +33,7 @@ export async function createEmailVerification(params: {
   const link = `${verificationUrl}?token=${rawToken}`
 
   await emailProvider.send({
+    from,
     to: email,
     subject: 'Verify your email address',
     html: `

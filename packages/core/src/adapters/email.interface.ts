@@ -21,6 +21,7 @@ export interface EmailAdapter {
    * Must throw on failure — AuthCore will not retry automatically.
    */
   send(options: {
+    from: string
     to: string
     subject: string
     html: string

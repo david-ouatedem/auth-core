@@ -37,6 +37,7 @@ export async function createPasswordReset(params: {
   const link = `${resetUrl}?token=${rawToken}`
 
   await emailProvider.send({
+    from,
     to: email,
     subject: 'Reset your password',
     html: `
