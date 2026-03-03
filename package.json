@@ -1,0 +1,32 @@
+{
+  "name": "authcore",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Devise-inspired, framework-agnostic authentication library for the JS ecosystem",
+  "scripts": {
+    "build": "pnpm --filter @authcore/core build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/express build",
+    "dev": "pnpm --recursive --parallel dev",
+    "test": "vitest run --reporter=verbose",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

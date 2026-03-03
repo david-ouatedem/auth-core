@@ -1,0 +1,37 @@
+{
+  "name": "@authcore/prisma-adapter",
+  "version": "0.1.0",
+  "description": "Prisma database adapter for AuthCore",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:push": "prisma db push --schema ./prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema ./prisma/schema.prisma",
+    "db:generate": "prisma generate --schema ./prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@authcore/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^5.0.0"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/node": "^20.0.0",
+    "dotenv": "^16.4.0",
+    "prisma": "^5.22.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
