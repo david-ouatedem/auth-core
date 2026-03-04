@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 
 const DEFAULT_SALT_ROUNDS = 12
 
