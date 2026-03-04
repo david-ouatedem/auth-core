@@ -33,3 +33,7 @@ coverage/
 
 # Turbo / cache
 .turbo/
+
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/cache/

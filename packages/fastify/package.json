@@ -1,0 +1,38 @@
+{
+  "name": "@authcore/fastify",
+  "version": "0.4.0",
+  "description": "Fastify adapter for AuthCore",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@authcore/core": "workspace:*",
+    "@fastify/cookie": "^11.0.0",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@authcore/prisma-adapter": "workspace:*",
+    "@prisma/client": "^5.22.0",
+    "@types/node": "^20.0.0",
+    "dotenv": "^16.4.0",
+    "prisma": "^5.22.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT"
+}
