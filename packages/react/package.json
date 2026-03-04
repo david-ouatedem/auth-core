@@ -1,6 +1,6 @@
 {
   "name": "@authcore/react",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "React SDK for AuthCore — AuthProvider, useAuth, ProtectedRoute",
   "author": "David Ouatedem",
   "repository": {
@@ -41,7 +41,8 @@
     "vitest": "^1.6.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "license": "MIT"
 }

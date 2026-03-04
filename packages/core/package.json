@@ -1,6 +1,6 @@
 {
   "name": "@authcore/core",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Framework-agnostic authentication core for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",
@@ -10,7 +10,7 @@
     "directory": "packages/core"
   },
   "keywords": ["auth", "authentication", "authcore", "jwt", "bcrypt"],
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "publishConfig": { "access": "public" },
   "type": "module",
   "main": "./dist/index.js",

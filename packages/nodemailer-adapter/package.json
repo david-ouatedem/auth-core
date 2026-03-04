@@ -1,6 +1,6 @@
 {
   "name": "@authcore/nodemailer-adapter",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Nodemailer email adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
@@ -38,7 +38,8 @@
     "vitest": "^1.6.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "license": "MIT"
 }

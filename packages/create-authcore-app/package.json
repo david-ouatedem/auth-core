@@ -1,6 +1,6 @@
 {
   "name": "create-authcore-app",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Scaffold a new AuthCore project",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
   "bin": {
     "create-authcore-app": "./dist/index.js"
   },
-  "files": ["dist", "templates"],
+  "files": ["dist", "templates", "README.md"],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
