@@ -1,7 +1,15 @@
 {
   "name": "@authcore/react",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "React SDK for AuthCore — AuthProvider, useAuth, ProtectedRoute",
+  "author": "David Ouatedem",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-ouatedem/auth-core",
+    "directory": "packages/react"
+  },
+  "keywords": ["auth", "authcore", "react", "hooks"],
+  "publishConfig": { "access": "public" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,0 +1,9 @@
+{
+  "name": "authcore-monorepo",
+  "private": true,
+  "scripts": {
+    "dev:server": "cd server && tsx src/index.ts",
+    "dev:client": "cd client && vite",
+    "db:push": "cd server && prisma db push"
+  }
+}

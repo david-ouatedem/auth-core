@@ -1,7 +1,17 @@
 {
   "name": "@authcore/core",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Framework-agnostic authentication core for AuthCore",
+  "license": "MIT",
+  "author": "David Ouatedem",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-ouatedem/auth-core",
+    "directory": "packages/core"
+  },
+  "keywords": ["auth", "authentication", "authcore", "jwt", "bcrypt"],
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
