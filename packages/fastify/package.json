@@ -1,6 +1,6 @@
 {
   "name": "@authcore/fastify",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Fastify adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
@@ -26,12 +26,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/core": "workspace:*",
+    "@authcore/core": "workspace:^",
     "@fastify/cookie": "^11.0.0",
     "fastify": "^5.0.0"
   },
   "devDependencies": {
-    "@authcore/prisma-adapter": "workspace:*",
+    "@authcore/prisma-adapter": "workspace:^",
     "@prisma/client": "^5.22.0",
     "@types/node": "^20.0.0",
     "dotenv": "^16.4.0",
