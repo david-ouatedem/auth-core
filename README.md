@@ -116,6 +116,27 @@ function Main() {
 }
 ```
 
+## Environment Setup
+
+Generate your `AUTH_SECRET` (used to sign JWTs):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Or with openssl:
+
+```bash
+openssl rand -hex 32
+```
+
+Add it to your `.env`:
+
+```
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/myapp"
+AUTH_SECRET="your-generated-secret-here"
+```
+
 ## Configuration
 
 ```ts
