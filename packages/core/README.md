@@ -1,8 +1,8 @@
 # @authcore/core
 
-> Framework-agnostic authentication engine — types, validation, password hashing, JWT, and adapter interfaces.
+> Framework-agnostic authentication engine - types, validation, password hashing, JWT, and adapter interfaces.
 
-This is the core package that powers all AuthCore framework adapters. You typically won't use it directly — instead, use [`@authcore/express`](https://www.npmjs.com/package/@authcore/express) or [`@authcore/fastify`](https://www.npmjs.com/package/@authcore/fastify).
+This is the core package that powers all AuthCore framework adapters. You typically won't use it directly - instead, use [`@authcore/express`](https://www.npmjs.com/package/@authcore/express) or [`@authcore/fastify`](https://www.npmjs.com/package/@authcore/fastify).
 
 ## Install
 

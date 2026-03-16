@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-AuthCore gives you registration, login, logout, email verification, and password reset out of the box — with sensible defaults, zero magic, and the ability to override anything.
+AuthCore gives you registration, login, logout, email verification, and password reset out of the box - with sensible defaults, zero magic, and the ability to override anything.
 
 ## Packages
 
@@ -14,7 +14,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic, types, and adapter interfaces |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
-| [`@authcore/react`](packages/react) | React SDK — `AuthProvider`, `useAuth`, `ProtectedRoute` |
+| [`@authcore/react`](packages/react) | React SDK - `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
 | [`@authcore/nodemailer-adapter`](packages/nodemailer-adapter) | Nodemailer email adapter |
@@ -128,19 +128,19 @@ const auth = createAuth({
     expiresIn: '7d',  // default
   },
 
-  // Optional — email (required for email verification + password reset)
+  // Optional - email (required for email verification + password reset)
   email: {
     provider: resendAdapter(process.env.RESEND_API_KEY!),
     from: 'auth@yourdomain.com',
   },
 
-  // Optional — enable features
+  // Optional - enable features
   features: ['emailVerification', 'passwordReset'],
 
-  // Optional — password rules
+  // Optional - password rules
   password: { minLength: 8 },
 
-  // Optional — lifecycle callbacks
+  // Optional - lifecycle callbacks
   callbacks: {
     onSignUp: (user) => console.log('New user:', user.email),
     onSignIn: (user) => console.log('Signed in:', user.email),

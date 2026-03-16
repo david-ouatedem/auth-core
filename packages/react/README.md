@@ -1,6 +1,6 @@
 # @authcore/react
 
-> React SDK for AuthCore — `AuthProvider`, `useAuth` hook, and `ProtectedRoute`.
+> React SDK for AuthCore - `AuthProvider`, `useAuth` hook, and `ProtectedRoute`.
 
 ## Install
 
@@ -84,10 +84,10 @@ await verifyEmail(token)
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `baseUrl` | `string` | — | Auth API base URL (e.g. `http://localhost:3000/auth`) |
+| `baseUrl` | `string` | - | Auth API base URL (e.g. `http://localhost:3000/auth`) |
 | `mode` | `'api' \| 'cookie'` | `'api'` | `api` uses Bearer tokens, `cookie` uses httpOnly cookies |
 | `storageKey` | `string` | `'authcore_token'` | localStorage key for the JWT (api mode only) |
-| `children` | `ReactNode` | — | — |
+| `children` | `ReactNode` | - | - |
 
 ### `useAuth()` Return Value
 
