@@ -10,12 +10,12 @@ npx create-authcore-app
 
 The CLI will prompt you for:
 
-1. **Project name** - directory to create
-2. **Template** - choose your setup:
-   - **api-only** - Express backend + React frontend on separate ports (Bearer token auth)
-   - **monorepo** - Express + React in one repo (httpOnly cookie auth, Vite proxy)
-   - **frontend-only** - React SPA connecting to an existing AuthCore API
-3. **Package manager** - pnpm, npm, or yarn
+1. **Project name**: directory to create
+2. **Template**: choose your setup
+   - **api-only**: Express backend + React frontend on separate ports (Bearer token auth)
+   - **monorepo**: Express + React in one repo (httpOnly cookie auth, Vite proxy)
+   - **frontend-only**: React SPA connecting to an existing AuthCore API
+3. **Package manager**: pnpm, npm, or yarn
 
 ## After Scaffolding
 

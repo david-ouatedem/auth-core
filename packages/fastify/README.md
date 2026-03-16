@@ -1,6 +1,6 @@
 # @authcore/fastify
 
-> Fastify adapter for AuthCore - plugin with auth routes and request hooks.
+> Fastify adapter for AuthCore. Plugin with auth routes and request hooks.
 
 ## Install
 
@@ -23,7 +23,7 @@ const auth = createAuth({
   session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
 })
 
-// Register auth plugin - adds all auth routes under /auth
+// Register auth plugin, adds all auth routes under /auth
 await app.register(auth.plugin(), { prefix: '/auth' })
 
 // Protect routes
@@ -47,9 +47,9 @@ Creates a Fastify auth instance. See [`@authcore/core`](https://www.npmjs.com/pa
 
 Returns:
 
-- **`auth.plugin(options?)`** - Fastify plugin that registers all auth routes
-- **`auth.authRequired()`** - `preHandler` hook that requires authentication, attaches `request.user`
-- **`auth.authOptional()`** - `preHandler` hook that optionally attaches `request.user`
+- **`auth.plugin(options?)`** Fastify plugin that registers all auth routes
+- **`auth.authRequired()`** `preHandler` hook that requires authentication, attaches `request.user`
+- **`auth.authOptional()`** `preHandler` hook that optionally attaches `request.user`
 
 ### Routes
 

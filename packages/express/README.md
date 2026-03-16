@@ -1,6 +1,6 @@
 # @authcore/express
 
-> Express adapter for AuthCore - drop-in auth routes and middleware.
+> Express adapter for AuthCore. Drop-in auth routes and middleware.
 
 ## Install
 
@@ -33,7 +33,7 @@ app.get('/dashboard', auth.middleware(), (req, res) => {
   res.json({ user: req.user })
 })
 
-// Optional auth - req.user is set if token is valid, undefined otherwise
+// Optional auth: req.user is set if token is valid, undefined otherwise
 app.get('/public', auth.optionalMiddleware(), (req, res) => {
   res.json({ user: req.user ?? null })
 })
@@ -49,9 +49,9 @@ Creates an Express auth instance. See [`@authcore/core`](https://www.npmjs.com/p
 
 Returns:
 
-- **`auth.router(options?)`** - Express Router with all auth endpoints
-- **`auth.middleware()`** - Protects routes, attaches `req.user`, returns 401 if unauthenticated
-- **`auth.optionalMiddleware()`** - Attaches `req.user` if token is valid, doesn't reject unauthenticated requests
+- **`auth.router(options?)`** Express Router with all auth endpoints
+- **`auth.middleware()`** Protects routes, attaches `req.user`, returns 401 if unauthenticated
+- **`auth.optionalMiddleware()`** Attaches `req.user` if token is valid, doesn't reject unauthenticated requests
 
 ### Router Options
 

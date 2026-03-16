@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-AuthCore gives you registration, login, logout, email verification, and password reset out of the box - with sensible defaults, zero magic, and the ability to override anything.
+AuthCore gives you registration, login, logout, email verification, and password reset out of the box. Sensible defaults, zero magic, override anything.
 
 ## Packages
 
@@ -14,7 +14,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic, types, and adapter interfaces |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
-| [`@authcore/react`](packages/react) | React SDK - `AuthProvider`, `useAuth`, `ProtectedRoute` |
+| [`@authcore/react`](packages/react) | React SDK: `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
 | [`@authcore/nodemailer-adapter`](packages/nodemailer-adapter) | Nodemailer email adapter |
@@ -128,19 +128,19 @@ const auth = createAuth({
     expiresIn: '7d',  // default
   },
 
-  // Optional - email (required for email verification + password reset)
+  // Email (required for email verification + password reset)
   email: {
     provider: resendAdapter(process.env.RESEND_API_KEY!),
     from: 'auth@yourdomain.com',
   },
 
-  // Optional - enable features
+  // Enable features
   features: ['emailVerification', 'passwordReset'],
 
-  // Optional - password rules
+  // Password rules
   password: { minLength: 8 },
 
-  // Optional - lifecycle callbacks
+  // Lifecycle callbacks
   callbacks: {
     onSignUp: (user) => console.log('New user:', user.email),
     onSignIn: (user) => console.log('Signed in:', user.email),
@@ -154,8 +154,8 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/register` | Create account → `{ user, token }` |
-| POST | `/login` | Sign in → `{ user, token }` |
+| POST | `/register` | Create account, returns `{ user, token }` |
+| POST | `/login` | Sign in, returns `{ user, token }` |
 | POST | `/logout` | Sign out |
 | GET | `/me` | Get current user (requires auth) |
 | POST | `/verify-email` | Verify email with token |

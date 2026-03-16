@@ -1,6 +1,6 @@
 # @authcore/react
 
-> React SDK for AuthCore - `AuthProvider`, `useAuth` hook, and `ProtectedRoute`.
+> React SDK for AuthCore. Includes `AuthProvider`, `useAuth` hook, and `ProtectedRoute`.
 
 ## Install
 
