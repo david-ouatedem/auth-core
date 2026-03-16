@@ -1,6 +1,6 @@
 {
   "name": "@authcore/prisma-adapter",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Prisma database adapter for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",
