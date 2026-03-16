@@ -1,6 +1,6 @@
 {
   "name": "@authcore/fastify",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Fastify adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
