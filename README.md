@@ -14,6 +14,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic, types, and adapter interfaces |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
+| [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |
 | [`@authcore/react`](packages/react) | React SDK: `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
@@ -82,6 +83,49 @@ await app.register(auth.plugin(), { prefix: '/auth' })
 app.get('/dashboard', { preHandler: auth.authRequired() }, async (request) => {
   return { user: request.user }
 })
+```
+
+### Backend (NestJS)
+
+```bash
+npm install @authcore/nestjs @authcore/prisma-adapter
+```
+
+```ts
+import { Module } from '@nestjs/common'
+import { AuthModule } from '@authcore/nestjs'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+@Module({
+  imports: [
+    AuthModule.register({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Protect routes with guards and decorators:
+
+```ts
+import { Controller, Get, UseGuards } from '@nestjs/common'
+import { AuthGuard, RolesGuard, Roles, CurrentUser } from '@authcore/nestjs'
+import type { PublicUser } from '@authcore/nestjs'
+
+@Controller('admin')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
+export class AdminController {
+  @Get()
+  getAdmin(@CurrentUser() user: PublicUser) {
+    return { message: 'Admin area', user }
+  }
+}
 ```
 
 ### Frontend (React)
@@ -198,6 +242,10 @@ app.get('/admin', auth.middleware(), auth.requireRole('admin'), handler)
 
 // Fastify
 app.get('/admin', { preHandler: [auth.authRequired(), auth.requireRole('admin')] }, handler)
+
+// NestJS
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
 ```
 
 ## Invitation
