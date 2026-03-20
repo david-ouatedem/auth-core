@@ -17,7 +17,7 @@ import { createAuth } from '../index.js'
 import * as dotenv from 'dotenv'
 import { resolve } from 'node:path'
 
-dotenv.config({ path: resolve(process.cwd(), '../../.env') })
+dotenv.config({ path: resolve(process.cwd(), '.env') })
 
 const DATABASE_URL = process.env['DATABASE_URL']
 const AUTH_SECRET = process.env['AUTH_SECRET'] ?? 'test-secret-at-least-32-chars-long-enough!!'

@@ -6,6 +6,7 @@ import {
   Res,
   UseGuards,
   HttpException,
+  HttpCode,
   HttpStatus,
   Inject,
 } from '@nestjs/common'
@@ -49,6 +50,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(200)
   async login(@Body() body: unknown) {
     try {
       const { user, token } = await this.auth.login(body)
@@ -59,6 +61,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @HttpCode(200)
   logout() {
     return { message: 'Logged out successfully' }
   }

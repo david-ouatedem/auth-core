@@ -24,7 +24,7 @@ import type { PublicUser } from '@authcore/core'
 import * as dotenv from 'dotenv'
 import { resolve } from 'node:path'
 
-dotenv.config({ path: resolve(process.cwd(), '../../.env') })
+dotenv.config({ path: resolve(process.cwd(), '.env') })
 
 const DATABASE_URL = process.env['DATABASE_URL']
 const AUTH_SECRET = process.env['AUTH_SECRET'] ?? 'test-secret-at-least-32-chars-long-enough!!'
@@ -189,7 +189,7 @@ describeIf('@authcore/nestjs integration', () => {
   describe('POST /auth/logout', () => {
     it('returns 200 with a logout message', async () => {
       const res = await request(app.getHttpServer()).post('/auth/logout')
-      expect(res.status).toBe(201) // NestJS POST default is 201
+      expect(res.status).toBe(200)
       expect(res.body.message).toMatch(/logged out/i)
     })
   })
