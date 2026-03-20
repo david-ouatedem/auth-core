@@ -78,6 +78,33 @@ await resetPassword(token, 'new-password')
 await verifyEmail(token)
 ```
 
+### RBAC Hooks
+
+```tsx
+import { useRole, useHasRole } from '@authcore/react'
+
+function AdminPanel() {
+  const role = useRole()               // 'admin', 'user', etc. or null
+  const isAdmin = useHasRole('admin')  // true/false
+  const isStaff = useHasRole(['admin', 'editor'])  // true if either role
+
+  if (!isAdmin) return <p>Access denied</p>
+  return <p>Welcome, {role}</p>
+}
+```
+
+### Invitation
+
+```tsx
+const { invite, acceptInvitation } = useAuth()
+
+// Admin invites a new user
+await invite('new@user.com', 'editor')
+
+// Invited user accepts (on the accept-invitation page)
+const user = await acceptInvitation(token, 'mypassword123')
+```
+
 ## API Reference
 
 ### `<AuthProvider>`
@@ -102,6 +129,8 @@ await verifyEmail(token)
 | `forgotPassword(email)` | `Promise<void>` | Request password reset |
 | `resetPassword(token, password)` | `Promise<void>` | Reset password |
 | `verifyEmail(token)` | `Promise<void>` | Verify email address |
+| `invite(email, role?)` | `Promise<void>` | Invite a new user by email |
+| `acceptInvitation(token, password)` | `Promise<PublicUser>` | Accept an invitation |
 | `refreshUser()` | `Promise<void>` | Re-fetch current user |
 
 ### `<ProtectedRoute>`

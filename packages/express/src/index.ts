@@ -32,6 +32,17 @@ export interface ExpressAuth {
    * is present, but does NOT reject unauthenticated requests.
    */
   optionalMiddleware(): RequestHandler
+
+  /**
+   * Returns a middleware that checks `req.user.role` against the allowed roles.
+   * Must be used after `auth.middleware()`.
+   * Returns 403 if the user's role is not in the allowed list.
+   *
+   * @example
+   * `app.get('/admin', auth.middleware(), auth.requireRole('admin'), handler)`
+   * `app.get('/staff', auth.middleware(), auth.requireRole('admin', 'editor'), handler)`
+   */
+  requireRole(...roles: string[]): RequestHandler
 }
 
 /**
@@ -70,6 +81,21 @@ export function createAuth(config: AuthCoreConfig): ExpressAuth {
 
     optionalMiddleware() {
       return createOptionalAuthMiddleware(core) as RequestHandler
+    },
+
+    requireRole(...roles: string[]) {
+      return ((req, res, next) => {
+        const user = req.user
+        if (!user) {
+          res.status(401).json({ error: 'Authentication required' })
+          return
+        }
+        if (!roles.includes(user.role)) {
+          res.status(403).json({ error: 'Insufficient permissions' })
+          return
+        }
+        next()
+      }) as RequestHandler
     },
   }
 }

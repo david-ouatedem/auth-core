@@ -54,7 +54,7 @@ describe('signJwt / verifyJwt', () => {
   const secret = 'test-secret-at-least-32-chars-long!!'
 
   it('signs and verifies a JWT', () => {
-    const token = signJwt({ sub: 'user-1', email: 'test@example.com' }, secret)
+    const token = signJwt({ sub: 'user-1', email: 'test@example.com', role: 'user' }, secret)
     const payload = verifyJwt(token, secret)
     expect(payload).not.toBeNull()
     expect(payload?.sub).toBe('user-1')
@@ -67,19 +67,19 @@ describe('signJwt / verifyJwt', () => {
   })
 
   it('returns null for a token signed with the wrong secret', () => {
-    const token = signJwt({ sub: 'user-1', email: 'test@example.com' }, secret)
+    const token = signJwt({ sub: 'user-1', email: 'test@example.com', role: 'user' }, secret)
     const result = verifyJwt(token, 'wrong-secret')
     expect(result).toBeNull()
   })
 
   it('returns null for an expired token', async () => {
-    const token = signJwt({ sub: 'user-1', email: 'test@example.com' }, secret, '-1s')
+    const token = signJwt({ sub: 'user-1', email: 'test@example.com', role: 'user' }, secret, '-1s')
     const result = verifyJwt(token, secret)
     expect(result).toBeNull()
   })
 
   it('encodes sub and email in the payload', () => {
-    const token = signJwt({ sub: 'abc', email: 'foo@bar.com' }, secret, '1h')
+    const token = signJwt({ sub: 'abc', email: 'foo@bar.com', role: 'admin' }, secret, '1h')
     const payload = verifyJwt(token, secret)
     expect(payload?.sub).toBe('abc')
     expect(payload?.email).toBe('foo@bar.com')

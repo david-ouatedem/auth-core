@@ -9,7 +9,8 @@ function toCoreTokenType(type: string): TokenType {
   if (
     type === 'EMAIL_VERIFICATION' ||
     type === 'PASSWORD_RESET' ||
-    type === 'SESSION'
+    type === 'SESSION' ||
+    type === 'INVITATION'
   ) {
     return type
   }
@@ -24,6 +25,7 @@ function mapUser(prismaUser: {
   email: string
   passwordHash: string
   emailVerified: boolean
+  role: string
   createdAt: Date
   updatedAt: Date
 }): User {
@@ -32,6 +34,7 @@ function mapUser(prismaUser: {
     email: prismaUser.email,
     passwordHash: prismaUser.passwordHash,
     emailVerified: prismaUser.emailVerified,
+    role: prismaUser.role,
     createdAt: prismaUser.createdAt,
     updatedAt: prismaUser.updatedAt,
   }
@@ -69,40 +72,30 @@ function hashRawToken(rawToken: string): string {
  * Minimal Prisma client interface — typed just enough for our needs.
  * This avoids a hard dep on generated Prisma types and keeps the adapter portable.
  */
+interface PrismaUserRecord {
+  id: string
+  email: string
+  passwordHash: string
+  emailVerified: boolean
+  role: string
+  createdAt: Date
+  updatedAt: Date
+}
+
 interface PrismaClientLike {
   user: {
-    findUnique(args: { where: { email?: string; id?: string } }): Promise<{
-      id: string
-      email: string
-      passwordHash: string
-      emailVerified: boolean
-      createdAt: Date
-      updatedAt: Date
-    } | null>
-    create(args: { data: { email: string; passwordHash: string } }): Promise<{
-      id: string
-      email: string
-      passwordHash: string
-      emailVerified: boolean
-      createdAt: Date
-      updatedAt: Date
-    }>
+    findUnique(args: { where: { email?: string; id?: string } }): Promise<PrismaUserRecord | null>
+    create(args: { data: { email: string; passwordHash: string; role?: string } }): Promise<PrismaUserRecord>
     update(args: {
       where: { id: string }
       data: Partial<{
         email: string
         passwordHash: string
         emailVerified: boolean
+        role: string
         updatedAt: Date
       }>
-    }): Promise<{
-      id: string
-      email: string
-      passwordHash: string
-      emailVerified: boolean
-      createdAt: Date
-      updatedAt: Date
-    }>
+    }): Promise<PrismaUserRecord>
   }
   token: {
     create(args: {
@@ -165,6 +158,7 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
         data: {
           email: data.email,
           passwordHash: data.passwordHash,
+          ...(data.role !== undefined ? { role: data.role } : {}),
         },
       })
       return mapUser(user)
@@ -177,6 +171,7 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
           ...(data.email !== undefined ? { email: data.email } : {}),
           ...(data.passwordHash !== undefined ? { passwordHash: data.passwordHash } : {}),
           ...(data.emailVerified !== undefined ? { emailVerified: data.emailVerified } : {}),
+          ...(data.role !== undefined ? { role: data.role } : {}),
         },
       })
       return mapUser(user)

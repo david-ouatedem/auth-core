@@ -156,10 +156,13 @@ const auth = createAuth({
   },
 
   // Enable features
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
 
   // Password rules
   password: { minLength: 8 },
+
+  // RBAC
+  rbac: { defaultRole: 'user' },
 
   // Lifecycle callbacks
   callbacks: {
@@ -182,6 +185,33 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 | POST | `/verify-email` | Verify email with token |
 | POST | `/forgot-password` | Request password reset email |
 | POST | `/reset-password` | Reset password with token |
+| POST | `/invite` | Invite a user by email (requires auth) |
+| POST | `/accept-invitation` | Accept invitation, set password |
+
+## RBAC
+
+Every user has a `role` field (string, default `'user'`). The role is included in the JWT, so authorization checks don't need extra database lookups.
+
+```ts
+// Express
+app.get('/admin', auth.middleware(), auth.requireRole('admin'), handler)
+
+// Fastify
+app.get('/admin', { preHandler: [auth.authRequired(), auth.requireRole('admin')] }, handler)
+```
+
+## Invitation
+
+Enable the `'invitation'` feature and configure an email provider. Authenticated users can invite new users by email with a pre-assigned role. The invited user receives a link to set their password.
+
+```ts
+// POST /auth/invite (requires auth)
+// Body: { email: "new@user.com", role: "editor" }
+
+// POST /auth/accept-invitation (public)
+// Body: { token: "...", password: "securepass123" }
+// Returns: { user, token }
+```
 
 ## Data Model
 
@@ -193,6 +223,7 @@ model User {
   email         String   @unique
   passwordHash  String
   emailVerified Boolean  @default(false)
+  role          String   @default("user")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   tokens        Token[]
@@ -212,6 +243,7 @@ enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
   SESSION
+  INVITATION
 }
 ```
 
@@ -229,7 +261,7 @@ See the [`@authcore/core` README](packages/core) for the adapter interfaces.
 
 - Passwords hashed with bcryptjs (12+ rounds)
 - Tokens are random, SHA-256 hashed before storage, compared with `crypto.timingSafeEqual`
-- Password reset tokens expire in 1 hour, email verification in 24 hours
+- Password reset tokens expire in 1 hour, email verification in 24 hours, invitation tokens in 48 hours
 - Forgot password always returns 200 (prevents email enumeration)
 - All inputs validated with Zod
 

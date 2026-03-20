@@ -15,6 +15,8 @@ export interface PluginConfig {
     verifyEmail?: string
     forgotPassword?: string
     resetPassword?: string
+    invite?: string
+    acceptInvitation?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token') */
   cookieName?: string
@@ -35,6 +37,7 @@ function handleError(reply: FastifyReply, err: unknown): FastifyReply {
  */
 export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
   const {
+    baseUrl = '',
     cookieName = 'authcore_token',
     useCookies = false,
     routes: routePaths = {},
@@ -48,6 +51,8 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     verifyEmail: routePaths.verifyEmail ?? '/verify-email',
     forgotPassword: routePaths.forgotPassword ?? '/forgot-password',
     resetPassword: routePaths.resetPassword ?? '/reset-password',
+    invite: routePaths.invite ?? '/invite',
+    acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
   }
 
   const isProduction = process.env['NODE_ENV'] === 'production'
@@ -120,6 +125,31 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
       try {
         await auth.resetPassword(request.body)
         return reply.send({ message: 'Password updated successfully' })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /invite (protected, requires auth)
+    fastify.post(paths.invite, { preHandler: [authRequired] }, async (request, reply) => {
+      try {
+        const inviteUrl = `${baseUrl}${paths.acceptInvitation}`
+        await auth.invite(request.body, { inviteUrl })
+        return reply.send({ message: 'Invitation sent' })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /accept-invitation (public)
+    fastify.post(paths.acceptInvitation, async (request, reply) => {
+      try {
+        const { user, token } = await auth.acceptInvitation(request.body)
+        if (useCookies) {
+          void reply.setCookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+          return reply.send({ user })
+        }
+        return reply.send({ user, token })
       } catch (err) {
         return handleError(reply, err)
       }

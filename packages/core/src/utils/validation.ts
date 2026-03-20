@@ -38,8 +38,23 @@ export const verifyEmailSchema = z.object({
   token: z.string().min(1, 'Token is required'),
 })
 
+/** Schema for POST /invite */
+export const inviteSchema = z.object({
+  email: emailSchema,
+  role: z.string().min(1).optional(),
+})
+
+/** Schema for POST /accept-invitation */
+export const acceptInvitationSchema = (minPasswordLength = 8) =>
+  z.object({
+    token: z.string().min(1, 'Token is required'),
+    password: passwordSchema(minPasswordLength),
+  })
+
 export type RegisterInput = z.infer<ReturnType<typeof registerSchema>>
 export type LoginInput = z.infer<typeof loginSchema>
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>
 export type ResetPasswordInput = z.infer<ReturnType<typeof resetPasswordSchema>>
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>
+export type InviteInput = z.infer<typeof inviteSchema>
+export type AcceptInvitationInput = z.infer<ReturnType<typeof acceptInvitationSchema>>
