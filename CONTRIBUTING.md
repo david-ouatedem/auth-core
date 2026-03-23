@@ -100,8 +100,16 @@ Check the [issues](https://github.com/david-ouatedem/auth-core/issues) page. Loo
 ### 2. Create a branch
 
 ```bash
-git checkout develop
-git pull origin develop
+# 1. Fork the repo on GitHub (https://github.com/david-ouatedem/auth-core)
+
+# 2. Clone your fork
+git clone https://github.com/your-username/auth-core.git
+cd auth-core
+
+# 3. Add the original repo as upstream
+git remote add upstream https://github.com/david-ouatedem/auth-core.git
+
+# 4. Create a branch for your feature
 git checkout -b feat/your-feature
 ```
 
@@ -123,10 +131,12 @@ Follow the patterns already in the codebase:
 
 ### 5. Submit a pull request
 
-- Target the `develop` branch
+- Target the `develop` branch of the original repo
 - Fill in the PR template
 - Keep PRs focused. One feature or fix per PR.
 - Make sure `pnpm build` and `pnpm test` pass locally before pushing
+- Push to your fork: `git push -u origin feat/your-feature`
+- Open a Pull Request from your branch on GitHub
 
 ## Adding a New Database Adapter
 
