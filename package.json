@@ -11,7 +11,7 @@
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "lint": "tsc --noEmit",
+    "lint": "pnpm -r exec tsc --noEmit",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs"
   },

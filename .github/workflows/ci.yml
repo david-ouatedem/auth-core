@@ -41,13 +41,16 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
+      - name: Generate Prisma client
+        run: npx prisma generate --schema packages/prisma-adapter/prisma/schema.prisma
 
-      - run: pnpm lint
+      - name: Build all packages
+        run: pnpm build
 
-      - name: Push Prisma schema
+      - name: Push Prisma schema to test DB
         run: npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma --accept-data-loss
         env:
           DATABASE_URL: postgresql://authcore:authcore_secret@localhost:5433/authcore_test
