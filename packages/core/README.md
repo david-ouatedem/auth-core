@@ -14,7 +14,7 @@ npm install @authcore/core
 
 ### `createAuth(config)`
 
-The main factory that creates an auth instance with `register`, `login`, `verifyToken`, `verifyEmail`, `forgotPassword`, and `resetPassword` methods.
+The main factory that creates an auth instance with `register`, `login`, `verifyToken`, `verifyEmail`, `forgotPassword`, `resetPassword`, `invite`, and `acceptInvitation` methods.
 
 ```ts
 import { createAuth } from '@authcore/core'
@@ -23,8 +23,9 @@ const auth = createAuth({
   db: myDatabaseAdapter,
   session: { strategy: 'jwt', secret: 'your-secret', expiresIn: '7d' },
   email: { provider: myEmailAdapter, from: 'auth@example.com' },
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
   password: { minLength: 8 },
+  rbac: { defaultRole: 'user' },
   callbacks: {
     onSignUp: (user) => { /* ... */ },
     onSignIn: (user) => { /* ... */ },
@@ -106,8 +107,18 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   verifyEmailSchema,
+  inviteSchema,
+  acceptInvitationSchema,
 } from '@authcore/core'
 ```
+
+### RBAC
+
+Users have a `role` field (string). The default role for new registrations is `'user'`, configurable via `rbac.defaultRole`. The role is included in the JWT payload, so role checks don't need extra database lookups.
+
+### Invitation
+
+Enable the `'invitation'` feature to let authenticated users invite new users by email. The invited user receives a link to set their password and activate their account. Invitation tokens expire in 48 hours.
 
 ## License
 

@@ -20,6 +20,7 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
     },
     // Run integration tests sequentially to avoid DB conflicts
+    fileParallelism: false,
     poolOptions: {
       forks: {
         singleFork: true,

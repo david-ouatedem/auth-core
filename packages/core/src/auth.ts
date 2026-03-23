@@ -1,6 +1,6 @@
 import type { AuthCoreConfig, PublicUser } from './types.js'
 import { hashPassword, verifyPassword } from './utils/password.js'
-import { signJwt, verifyJwt, generateOpaqueToken, hashToken } from './utils/token.js'
+import { signJwt, verifyJwt } from './utils/token.js'
 import {
   registerSchema,
   loginSchema,
@@ -16,6 +16,11 @@ import {
   createPasswordReset,
   resetPassword as resetPasswordFeature,
 } from './features/passwordReset.js'
+import {
+  createInvitation,
+  acceptInvitation as acceptInvitationFeature,
+} from './features/invitation.js'
+import { inviteSchema, acceptInvitationSchema } from './utils/validation.js'
 
 export class AuthError extends Error {
   constructor(
@@ -77,12 +82,26 @@ export interface AuthCore {
    * @throws AuthError if token is invalid or expired (400)
    */
   resetPassword(input: unknown): Promise<void>
+
+  /**
+   * Invite a new user by email with an optional role.
+   * Creates the user record and sends an invitation email.
+   * @throws AuthError if user already exists (409) or feature not enabled
+   */
+  invite(input: unknown, params: { inviteUrl: string }): Promise<void>
+
+  /**
+   * Accept an invitation by setting a password.
+   * @throws AuthError if token is invalid or expired (400)
+   */
+  acceptInvitation(input: unknown): Promise<{ user: PublicUser; token: string }>
 }
 
 function toPublicUser(user: {
   id: string
   email: string
   emailVerified: boolean
+  role: string
   createdAt: Date
   updatedAt: Date
   passwordHash: string
@@ -91,6 +110,7 @@ function toPublicUser(user: {
     id: user.id,
     email: user.email,
     emailVerified: user.emailVerified,
+    role: user.role,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   }
@@ -112,13 +132,15 @@ function toPublicUser(user: {
  * ```
  */
 export function createAuth(config: AuthCoreConfig): AuthCore {
-  const { db, session, email, features = [], password: pwConfig = {}, callbacks = {} } = config
+  const { db, session, email, features = [], password: pwConfig = {}, callbacks = {}, rbac = {} } = config
   const saltRounds = pwConfig.saltRounds ?? 12
   const minPasswordLength = pwConfig.minLength ?? 8
   const expiresIn = session.expiresIn ?? '7d'
+  const defaultRole = rbac.defaultRole ?? 'user'
 
   const hasEmailVerification = features.includes('emailVerification')
   const hasPasswordReset = features.includes('passwordReset')
+  const hasInvitation = features.includes('invitation')
 
   return {
     async register(input) {
@@ -140,10 +162,10 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
       }
 
       const passwordHash = await hashPassword(password, saltRounds)
-      const user = await db.createUser({ email: userEmail, passwordHash })
+      const user = await db.createUser({ email: userEmail, passwordHash, role: defaultRole })
       const publicUser = toPublicUser(user)
 
-      const token = signJwt({ sub: user.id, email: user.email }, session.secret, expiresIn)
+      const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
 
       await callbacks.onSignUp?.(publicUser)
 
@@ -181,7 +203,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
       }
 
       const publicUser = toPublicUser(user)
-      const token = signJwt({ sub: user.id, email: user.email }, session.secret, expiresIn)
+      const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
 
       await callbacks.onSignIn?.(publicUser)
 
@@ -289,6 +311,75 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
           }
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : 'Invalid token'
+        throw new AuthError(message, 'INVALID_TOKEN', 400)
+      }
+    },
+
+    async invite(input, { inviteUrl }) {
+      if (!hasInvitation) {
+        throw new AuthError('invitation feature is not enabled', 'FEATURE_DISABLED', 500)
+      }
+      if (!email) {
+        throw new AuthError('Email provider is not configured', 'EMAIL_NOT_CONFIGURED', 500)
+      }
+
+      const parsed = inviteSchema.safeParse(input)
+      if (!parsed.success) {
+        throw new AuthError(
+          parsed.error.errors[0]?.message ?? 'Validation failed',
+          'VALIDATION_ERROR',
+          400,
+        )
+      }
+
+      try {
+        await createInvitation({
+          email: parsed.data.email,
+          role: parsed.data.role ?? defaultRole,
+          db,
+          emailProvider: email.provider,
+          from: email.from,
+          inviteUrl,
+        })
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('already exists')) {
+          throw new AuthError('A user with this email already exists', 'EMAIL_EXISTS', 409)
+        }
+        throw err
+      }
+    },
+
+    async acceptInvitation(input) {
+      const schema = acceptInvitationSchema(minPasswordLength)
+      const parsed = schema.safeParse(input)
+      if (!parsed.success) {
+        throw new AuthError(
+          parsed.error.errors[0]?.message ?? 'Validation failed',
+          'VALIDATION_ERROR',
+          400,
+        )
+      }
+
+      try {
+        const { userId } = await acceptInvitationFeature({
+          rawToken: parsed.data.token,
+          newPassword: parsed.data.password,
+          db,
+          saltRounds,
+        })
+
+        const user = await db.findUserById(userId)
+        if (!user) {
+          throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+        }
+
+        const publicUser = toPublicUser(user)
+        const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
+
+        return { user: publicUser, token }
+      } catch (err) {
+        if (err instanceof AuthError) throw err
         const message = err instanceof Error ? err.message : 'Invalid token'
         throw new AuthError(message, 'INVALID_TOKEN', 400)
       }

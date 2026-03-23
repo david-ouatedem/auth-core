@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: authcore
+          POSTGRES_PASSWORD: authcore_secret
+          POSTGRES_DB: authcore_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U authcore"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema packages/prisma-adapter/prisma/schema.prisma
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Push Prisma schema to test DB
+        run: npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma --accept-data-loss
+        env:
+          DATABASE_URL: postgresql://authcore:authcore_secret@localhost:5433/authcore_test
+
+      - name: Run tests
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://authcore:authcore_secret@localhost:5433/authcore_test
+          AUTH_SECRET: ci-test-secret-that-is-at-least-32-characters-long

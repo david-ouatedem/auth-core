@@ -39,6 +39,7 @@ model User {
   email         String   @unique
   passwordHash  String
   emailVerified Boolean  @default(false)
+  role          String   @default("user")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   tokens        Token[]
@@ -58,6 +59,7 @@ enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
   SESSION
+  INVITATION
 }
 ```
 
