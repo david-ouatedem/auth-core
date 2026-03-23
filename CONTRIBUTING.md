@@ -7,7 +7,7 @@ Thanks for your interest in contributing to AuthCore! This guide will help you g
 ### Prerequisites
 
 - Node.js >= 18
-- pnpm >= 8
+- pnpm >= 10
 - Docker (for integration tests)
 
 ### Setup
@@ -30,7 +30,7 @@ docker compose up -d
 DATABASE_URL="postgresql://authcore:authcore_secret@localhost:5433/authcore_test" \
   npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma
 
-# Build all packages
+# Build all packages (types → core-web → everything else)
 pnpm build
 
 # Run all tests
@@ -42,14 +42,16 @@ pnpm test
 This is a pnpm monorepo. Packages are in `packages/` and build in dependency order:
 
 ```
-@authcore/core              (standalone)
+@authcore/types             (standalone — shared type definitions)
+@authcore/core              (depends on types)
+@authcore/core-web          (depends on types — framework-agnostic web auth service)
 @authcore/prisma-adapter    (depends on core)
 @authcore/resend-adapter    (standalone)
 @authcore/nodemailer-adapter(standalone)
 @authcore/express           (depends on core)
 @authcore/fastify           (depends on core)
 @authcore/nestjs            (depends on core)
-@authcore/react             (standalone)
+@authcore/react             (depends on core-web, types)
 create-authcore-app         (standalone)
 ```
 
