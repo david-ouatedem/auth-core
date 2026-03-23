@@ -4,7 +4,7 @@
   "version": "0.5.4",
   "description": "Devise-inspired, framework-agnostic authentication library for the JS ecosystem",
   "scripts": {
-    "build": "pnpm --filter @authcore/core build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",
+    "build": "pnpm --filter @authcore/core build && pnpm --filter @authcore/core-web build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",
     "publish:all": "pnpm -r publish --access public",
     "publish:dry": "pnpm -r publish --access public --dry-run",
     "dev": "pnpm --recursive --parallel dev",

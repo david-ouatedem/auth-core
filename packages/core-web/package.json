@@ -1,0 +1,49 @@
+{
+  "name": "@authcore/core-web",
+  "version": "0.5.4",
+  "description": "Web Agnostic Authentication core for AuthCore",
+  "license": "MIT",
+  "author": "Phanuel Wayne",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-ouatedem/auth-core",
+    "directory": "packages/core-web"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "authcore",
+    "jwt",
+    "bcrypt"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@authcore/core": "^0.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

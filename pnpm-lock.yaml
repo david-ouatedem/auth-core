@@ -48,6 +48,22 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.35)(jsdom@24.1.3)
 
+  packages/core-web:
+    dependencies:
+      '@authcore/core':
+        specifier: ^0.5.4
+        version: 0.5.4
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.35
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@20.19.35)(jsdom@24.1.3)
+
   packages/create-authcore-app:
     dependencies:
       '@clack/prompts':
@@ -184,6 +200,9 @@ importers:
       '@authcore/core':
         specifier: workspace:^
         version: link:../core
+      '@authcore/core-web':
+        specifier: workspace:^
+        version: link:../core-web
     devDependencies:
       '@testing-library/react':
         specifier: ^16.0.0
@@ -227,6 +246,9 @@ packages:
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
+
+  '@authcore/core@0.5.4':
+    resolution: {integrity: sha512-wrHeIH3biI94UF2b8DuPAAUhwlHd3mV1XU96uvZOOMmkV5s0+bz+ldIxgoXqJpxIxGtGYATl9VcN5L4Pc4q8+Q==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -1806,6 +1828,12 @@ snapshots:
       '@csstools/css-parser-algorithms': 3.0.5(@csstools/css-tokenizer@3.0.4)
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
+
+  '@authcore/core@0.5.4':
+    dependencies:
+      bcryptjs: 2.4.3
+      jsonwebtoken: 9.0.3
+      zod: 3.25.76
 
   '@babel/code-frame@7.29.0':
     dependencies:

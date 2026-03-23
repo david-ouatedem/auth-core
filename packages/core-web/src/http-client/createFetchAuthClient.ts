@@ -3,6 +3,9 @@
  * Uses native fetch — no external dependencies.
  */
 
+import { HttpClient } from "../types/HttpClients.interface.js"
+
+
 export interface AuthClientConfig {
   baseUrl: string
   mode: 'api' | 'cookie'
@@ -25,7 +28,7 @@ export class AuthRequestError extends Error {
   }
 }
 
-export function createAuthClient(config: AuthClientConfig) {
+export function createFetchAuthClient(config: AuthClientConfig): HttpClient {
   const { baseUrl, mode, getToken } = config
 
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
