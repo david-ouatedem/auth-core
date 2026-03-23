@@ -55,7 +55,7 @@ export interface SessionConfig {
 
 /** Configuration for email features. */
 export interface EmailConfig {
-  provider: import('./adapters/email.interface.js').EmailAdapter
+  provider: EmailAdapter
   from: string
 }
 
@@ -67,9 +67,36 @@ export interface AuthCallbacks {
   onPasswordReset?: (user: PublicUser) => void | Promise<void>
 }
 
+/**
+ * DatabaseAdapter defines the contract that any database implementation must fulfill.
+ */
+export interface DatabaseAdapter {
+  findUserByEmail(email: string): Promise<User | null>
+  findUserById(id: string): Promise<User | null>
+  createUser(data: CreateUserInput): Promise<User>
+  updateUser(id: string, data: Partial<Omit<User, 'id' | 'createdAt'>>): Promise<User>
+  createToken(data: CreateTokenInput): Promise<Token>
+  findToken(rawToken: string, type: TokenType): Promise<Token | null>
+  deleteToken(id: string): Promise<void>
+  deleteExpiredTokens(): Promise<void>
+}
+
+/**
+ * EmailAdapter defines the contract for any email provider implementation.
+ */
+export interface EmailAdapter {
+  send(options: {
+    from: string
+    to: string
+    subject: string
+    html: string
+    text: string
+  }): Promise<void>
+}
+
 /** Top-level AuthCore configuration object. */
 export interface AuthCoreConfig {
-  db: import('./adapters/database.interface.js').DatabaseAdapter
+  db: DatabaseAdapter
   session: SessionConfig
   email?: EmailConfig
   features?: Array<'emailVerification' | 'passwordReset' | 'invitation'>

@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@authcore/core": "workspace:^",
+    "@authcore/types": "workspace:^",
     "@fastify/cookie": "^11.0.0",
     "fastify": "^5.0.0"
   },

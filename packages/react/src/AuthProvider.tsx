@@ -1,5 +1,6 @@
-import { createContext, useContext, useSyncExternalStore, useMemo } from 'react';
-import { AuthWebService, type PublicUser, type AuthWebRoutesInterface } from '@authcore/core-web';
+import { createContext, useContext, useSyncExternalStore, useMemo, useEffect } from 'react';
+import { AuthWebService, type AuthWebRoutesInterface } from '@authcore/core-web';
+import type { PublicUser } from '@authcore/types';
 
 export interface AuthContextValue {
     user: PublicUser | null
@@ -37,7 +38,7 @@ export const AuthProvider = ({ baseUrl,
         token: '',
         user: null,
         error: null,
-        isLoading: false,
+        isLoading: true,
         isAuthenticated: false,
     }, routes), [baseUrl, mode, storageKey, persistSession, routes]);
 
@@ -45,6 +46,10 @@ export const AuthProvider = ({ baseUrl,
         (callback) => webCoreInstance.subscribe(callback),
         () => webCoreInstance.getState()
     );
+
+    useEffect(() => {
+        webCoreInstance.refreshUser().catch(() => {});
+    }, [webCoreInstance]);
 
     return <AuthContext.Provider value={{
         ...state,

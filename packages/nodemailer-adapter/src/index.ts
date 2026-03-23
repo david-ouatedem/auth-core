@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer'
-import type { EmailAdapter } from '@authcore/core'
+import type { EmailAdapter } from '@authcore/types'
 
 /**
  * Configuration for the Nodemailer transport.

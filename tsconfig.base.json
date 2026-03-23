@@ -15,6 +15,10 @@
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@authcore/*": ["packages/*/src"]
+    }
   }
 }

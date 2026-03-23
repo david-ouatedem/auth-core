@@ -39,7 +39,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/core": "^0.5.4"
+    "@authcore/types": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

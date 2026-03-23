@@ -3,7 +3,7 @@ import { AuthWebServiceResponseInterface } from "./types/AuthWebService.response
 import { AuthWebStateInterface } from "./types/AuthWebState.interface.js";
 import { HttpClient } from "./types/HttpClients.interface.js";
 import { createFetchAuthClient } from './http-client/createFetchAuthClient.js';
-import { PublicUser } from "./types/PublicUser.js";
+import { PublicUser } from "@authcore/types";
 
 export class AuthWebService implements AuthWebServiceResponseInterface {
     private state: AuthWebStateInterface;
@@ -13,10 +13,18 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
 
     constructor(initialState: AuthWebStateInterface, routes?: AuthWebRoutesInterface) {
         this.state = initialState;
+        
+        if (typeof window !== 'undefined' && this.state.mode === 'api' && this.state.persistSession) {
+            const stored = localStorage.getItem(this.state.storageKey ?? 'authcore_token');
+            if (stored) {
+                this.state.token = stored;
+            }
+        }
+
         this.client = createFetchAuthClient({
             baseUrl: initialState.baseUrl,
             mode: initialState.mode,
-            getToken: () => initialState.token ?? null,
+            getToken: () => this.state.token ?? null,
         });
         this.paths = {
             register: routes?.register ?? '/register',
@@ -49,7 +57,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
             return response
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
-            return undefined;
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -75,7 +83,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
             return response
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
-            return undefined;
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -92,6 +100,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
             this.notifyListeners();
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -107,6 +116,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
             this.notifyListeners();
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -122,6 +132,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
             this.notifyListeners();
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -137,6 +148,7 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
         } catch (error) {
             this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
             this.notifyListeners();
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();
@@ -147,11 +159,13 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
             this.state = { ...this.state, isLoading: true };
             this.notifyListeners();
             const response = await this.client.get<PublicUser>(this.paths.me)
-            this.state = { ...this.state, user: response, isLoading: false }
+            this.state = { ...this.state, user: response, isLoading: false, isAuthenticated: true }
             this.notifyListeners();
         } catch (error) {
-            this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error" };
+            this.state = { ...this.state, error: error instanceof Error ? error.message : "Unknown error", user: null, isAuthenticated: false };
+            this.setToken(null);
             this.notifyListeners();
+            throw error;
         } finally {
             this.state = { ...this.state, isLoading: false }
             this.notifyListeners();

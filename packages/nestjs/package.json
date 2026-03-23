@@ -21,7 +21,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/core": "workspace:^"
+    "@authcore/core": "workspace:^",
+    "@authcore/types": "workspace:^"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",

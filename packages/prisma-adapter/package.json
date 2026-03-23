@@ -31,7 +31,7 @@
     "db:generate": "prisma generate --schema ./prisma/schema.prisma"
   },
   "dependencies": {
-    "@authcore/core": "workspace:^"
+    "@authcore/types": "workspace:^"
   },
   "peerDependencies": {
     "@prisma/client": "^5.0.0"

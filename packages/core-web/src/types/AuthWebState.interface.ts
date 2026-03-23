@@ -1,4 +1,4 @@
-import type { PublicUser } from '@authcore/core'
+import type { PublicUser } from '@authcore/types'
 
 export interface AuthWebStateInterface {
     isLoading: boolean;
@@ -7,7 +7,7 @@ export interface AuthWebStateInterface {
     isAuthenticated: boolean;
     user: PublicUser | null;
     error: string | null;
-    token?: string
+    token: string | null;
     baseUrl: string;
     mode: 'api' | 'cookie';
 }
