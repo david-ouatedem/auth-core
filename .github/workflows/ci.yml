@@ -45,13 +45,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: npx prisma generate --schema packages/prisma-adapter/prisma/schema.prisma
+        run: pnpm --filter @authcore/prisma-adapter exec prisma generate
 
       - name: Build all packages
         run: pnpm build
 
       - name: Push Prisma schema to test DB
-        run: npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma --accept-data-loss
+        run: pnpm --filter @authcore/prisma-adapter exec prisma db push --accept-data-loss
         env:
           DATABASE_URL: postgresql://authcore:authcore_secret@localhost:5433/authcore_test
 

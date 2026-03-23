@@ -1,7 +1,7 @@
 {
   "name": "authcore",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Devise-inspired, framework-agnostic authentication library for the JS ecosystem",
   "scripts": {
     "build": "pnpm --filter @authcore/core build && pnpm --filter @authcore/core-web build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/nestjs build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",

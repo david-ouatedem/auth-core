@@ -1,6 +1,10 @@
 {
   "name": "@authcore/react",
+<<<<<<< HEAD
   "version": "0.5.5",
+=======
+  "version": "0.6.0",
+>>>>>>> b6c68d392785f72a7037a476327d85e548d6ddf7
   "description": "React SDK for AuthCore — AuthProvider, useAuth, ProtectedRoute",
   "author": "David Ouatedem",
   "repository": {

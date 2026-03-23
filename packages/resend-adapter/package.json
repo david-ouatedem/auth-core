@@ -1,6 +1,6 @@
 {
   "name": "@authcore/resend-adapter",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Resend email adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
