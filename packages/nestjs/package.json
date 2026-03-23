@@ -1,6 +1,6 @@
 {
   "name": "@authcore/nestjs",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "NestJS adapter for AuthCore. Dynamic module, guards, and decorators.",
   "type": "module",
   "main": "./dist/index.js",

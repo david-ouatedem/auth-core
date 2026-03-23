@@ -1,6 +1,6 @@
 {
   "name": "@authcore/core",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Framework-agnostic authentication core for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",

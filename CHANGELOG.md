@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-23
+
+### Added
+
+- **@authcore/nestjs**: NestJS adapter with `AuthModule.register()`, guards (`AuthGuard`, `AuthOptionalGuard`, `RolesGuard`), and decorators (`@CurrentUser`, `@Roles`, `@Public`)
+- **RBAC**: Role-based access control across all packages. Every user gets a `role` field (default `'user'`), included in the JWT payload.
+- **Invitation system**: `invite()` and `acceptInvitation()` methods. Authenticated users can invite new users by email with a pre-assigned role.
+- `requireRole()` middleware for Express and Fastify
+- `useRole()` and `useHasRole()` hooks for React
+- GitHub Actions CI pipeline (Node 18/20/22 with Postgres)
+- Open-source community files: CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, issue/PR templates
+
+### Fixed
+
+- Integration test dotenv path resolution (now resolves from workspace root)
+- Vitest `fileParallelism: false` to prevent DB conflicts between test files
+- NestJS guard DI: explicit `@Inject(Reflector)` for esbuild compatibility
+- CI uses workspace-local Prisma binary to avoid version mismatch
+
 ## [0.5.4] - 2026-03-20
 
 ### Added
