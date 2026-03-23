@@ -103,85 +103,90 @@ export function AuthProvider({
   }, [client, mode, paths.me, persistSession, storageKey, setToken])
 
   const signUp = useCallback(async (email: string, password: string): Promise<PublicUser> => {
-    setIsLoading(true);
-    const res = await client.post<{ user: PublicUser; token?: string }>(
-      paths.register,
-      { email, password },
-    ).then((res: any) => {
-      if (res.token) setToken(res.token)
-      setUser(res.user)
-      setIsLoading(false);
-      return res.user
-    }).catch((err: any) => {
-      throw err
-    })
+    setIsLoading(true)
+    try {
+      const { user, token } = await client.post<{ user: PublicUser; token?: string }>(
+        paths.register,
+        { email, password },
+      )
+      if (token) setToken(token)
+      setUser(user)
+      return user
+    } finally {
+      setIsLoading(false)
+    }
   }, [client, paths.register, setToken])
 
   const signIn = useCallback(async (email: string, password: string): Promise<PublicUser> => {
-    setIsLoading(true);
-    return client.post<{ user: PublicUser; token?: string }>(
-      paths.login,
-      { email, password },
-    ).then((res: any) => {
-      if (res.token) setToken(res.token)
-      setUser(res.user)
-      return res.user
-    }).catch((err: any) => {
+    setIsLoading(true)
+    try {
+      const { user, token } = await client.post<{ user: PublicUser; token?: string }>(
+        paths.login,
+        { email, password },
+      )
+      if (token) setToken(token)
+      setUser(user)
+      return user
+    } catch (err) {
       setToken(null)
       setUser(null)
       throw err
-    })
-      .finally(() => setIsLoading(false))
+    } finally {
+      setIsLoading(false)
+    }
   }, [client, paths.login, setToken])
 
   const signOut = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    await client.post(paths.logout).then((res: any) => {
+    setIsLoading(true)
+    try {
+      await client.post(paths.logout)
       setToken(null)
       setUser(null)
-    }).catch((err: any) => {
-      throw err
-    }).finally(() => {
-      setIsLoading(false);
-    })
-
+    } finally {
+      setIsLoading(false)
+    }
   }, [client, paths.logout, setToken])
 
   const verifyEmailFn = useCallback(async (token: string): Promise<void> => {
     setIsLoading(true)
-    await client.post(paths.verifyEmail, { token }).finally(() => {
+    try {
+      await client.post(paths.verifyEmail, { token })
+    } finally {
       setIsLoading(false)
-    })
+    }
   }, [client, paths.verifyEmail])
 
   const forgotPasswordFn = useCallback(async (email: string): Promise<void> => {
     setIsLoading(true)
-    await client.post(paths.forgotPassword, { email }).finally(() => {
+    try {
+      await client.post(paths.forgotPassword, { email })
+    } finally {
       setIsLoading(false)
-    })
+    }
   }, [client, paths.forgotPassword])
 
   const resetPasswordFn = useCallback(async (token: string, password: string): Promise<void> => {
     setIsLoading(true)
-    await client.post(paths.resetPassword, { token, password }).finally(() => {
+    try {
+      await client.post(paths.resetPassword, { token, password })
+    } finally {
       setIsLoading(false)
-    })
+    }
   }, [client, paths.resetPassword])
 
   const refreshUser = useCallback(async (): Promise<void> => {
-    await client.get<PublicUser>(paths.me).
-      then((me: PublicUser) => {
-        setUser(me)
-      }).catch((err: any) => {
-        setToken(null)
-        setUser(null)
-          throw err
-        })
-      .finally(() => {
-        setIsLoading(false)
-      })
+    setIsLoading(true)
+    try {
+      const me = await client.get<PublicUser>(paths.me)
+      setUser(me)
+    } catch (err) {
+      setToken(null)
+      setUser(null)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
   }, [client, paths.me, setToken])
-  // console.log("ert787845", client.isLoading())
   const value = useMemo<AuthContextValue>(() => ({
     user,
     isLoading,
