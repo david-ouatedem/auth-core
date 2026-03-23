@@ -3,7 +3,7 @@
  * These are the canonical shapes that adapters must produce/consume.
  */
 
-export type TokenType = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'SESSION'
+export type TokenType = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'SESSION' | 'INVITATION'
 
 /** A user record as stored in the database. */
 export interface User {
@@ -11,6 +11,7 @@ export interface User {
   email: string
   passwordHash: string
   emailVerified: boolean
+  role: string
   createdAt: Date
   updatedAt: Date
 }
@@ -30,6 +31,7 @@ export interface Token {
 export interface CreateUserInput {
   email: string
   passwordHash: string
+  role?: string
 }
 
 /** Input shape for creating a new token. */
@@ -70,11 +72,14 @@ export interface AuthCoreConfig {
   db: import('./adapters/database.interface.js').DatabaseAdapter
   session: SessionConfig
   email?: EmailConfig
-  features?: Array<'emailVerification' | 'passwordReset'>
+  features?: Array<'emailVerification' | 'passwordReset' | 'invitation'>
   mode?: 'api' | 'monorepo' | 'auto'
   password?: {
     minLength?: number
     saltRounds?: number
+  }
+  rbac?: {
+    defaultRole?: string
   }
   callbacks?: AuthCallbacks
 }

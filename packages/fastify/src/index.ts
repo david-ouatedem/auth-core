@@ -32,6 +32,16 @@ export interface FastifyAuth {
    * a valid token is present, but does NOT reject unauthenticated requests.
    */
   authOptional(): preHandlerHookHandler
+
+  /**
+   * Returns a preHandler hook that checks `request.user.role` against the allowed roles.
+   * Must be used after `authRequired()`.
+   * Returns 403 if the user's role is not in the allowed list.
+   *
+   * @example
+   * `app.get('/admin', { preHandler: [auth.authRequired(), auth.requireRole('admin')] }, handler)`
+   */
+  requireRole(...roles: string[]): preHandlerHookHandler
 }
 
 /**
@@ -75,6 +85,21 @@ export function createAuth(config: AuthCoreConfig): FastifyAuth {
 
     authOptional() {
       return createAuthOptional(core) as preHandlerHookHandler
+    },
+
+    requireRole(...roles: string[]) {
+      return ((request, reply, done) => {
+        const user = request.user
+        if (!user) {
+          void reply.code(401).send({ error: 'Authentication required' })
+          return
+        }
+        if (!roles.includes(user.role)) {
+          void reply.code(403).send({ error: 'Insufficient permissions' })
+          return
+        }
+        done()
+      }) as preHandlerHookHandler
     },
   }
 }

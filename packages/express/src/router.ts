@@ -14,6 +14,8 @@ export interface RouterConfig {
     verifyEmail?: string
     forgotPassword?: string
     resetPassword?: string
+    invite?: string
+    acceptInvitation?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token') */
   cookieName?: string
@@ -54,6 +56,8 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     verifyEmail: routePaths.verifyEmail ?? '/verify-email',
     forgotPassword: routePaths.forgotPassword ?? '/forgot-password',
     resetPassword: routePaths.resetPassword ?? '/reset-password',
+    invite: routePaths.invite ?? '/invite',
+    acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
   }
 
   // POST /register
@@ -124,6 +128,32 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     try {
       await auth.resetPassword(req.body)
       res.json({ message: 'Password updated successfully' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /invite (protected, requires auth)
+  router.post(paths.invite, middleware, async (req, res) => {
+    try {
+      const inviteUrl = `${baseUrl}${paths.acceptInvitation}`
+      await auth.invite(req.body, { inviteUrl })
+      res.json({ message: 'Invitation sent' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /accept-invitation (public)
+  router.post(paths.acceptInvitation, async (req, res) => {
+    try {
+      const { user, token } = await auth.acceptInvitation(req.body)
+      if (useCookies) {
+        res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: process.env['NODE_ENV'] === 'production' })
+        res.json({ user })
+      } else {
+        res.json({ user, token })
+      }
     } catch (err) {
       handleError(res, err)
     }

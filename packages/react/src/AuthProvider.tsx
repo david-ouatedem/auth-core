@@ -12,6 +12,8 @@ export interface AuthContextValue {
   verifyEmail(token: string): Promise<void>
   forgotPassword(email: string): Promise<void>
   resetPassword(token: string, password: string): Promise<void>
+  invite(email: string, role?: string): Promise<void>
+  acceptInvitation(token: string, password: string): Promise<PublicUser>
   refreshUser(): Promise<void>
 }
 
@@ -30,6 +32,8 @@ export interface AuthProviderProps {
     verifyEmail?: string
     forgotPassword?: string
     resetPassword?: string
+    invite?: string
+    acceptInvitation?: string
   }
   children: React.ReactNode
 }
@@ -54,6 +58,8 @@ export function AuthProvider({
     verifyEmail: routes.verifyEmail ?? '/verify-email',
     forgotPassword: routes.forgotPassword ?? '/forgot-password',
     resetPassword: routes.resetPassword ?? '/reset-password',
+    invite: routes.invite ?? '/invite',
+    acceptInvitation: routes.acceptInvitation ?? '/accept-invitation',
   }), [routes])
 
   const client = useMemo(
@@ -140,6 +146,20 @@ export function AuthProvider({
     await client.post(paths.resetPassword, { token, password })
   }, [client, paths.resetPassword])
 
+  const inviteFn = useCallback(async (email: string, role?: string): Promise<void> => {
+    await client.post(paths.invite, { email, role })
+  }, [client, paths.invite])
+
+  const acceptInvitationFn = useCallback(async (token: string, password: string): Promise<PublicUser> => {
+    const res = await client.post<{ user: PublicUser; token?: string }>(
+      paths.acceptInvitation,
+      { token, password },
+    )
+    if (res.token) setToken(res.token)
+    setUser(res.user)
+    return res.user
+  }, [client, paths.acceptInvitation, setToken])
+
   const refreshUser = useCallback(async (): Promise<void> => {
     try {
       const me = await client.get<PublicUser>(paths.me)
@@ -160,8 +180,10 @@ export function AuthProvider({
     verifyEmail: verifyEmailFn,
     forgotPassword: forgotPasswordFn,
     resetPassword: resetPasswordFn,
+    invite: inviteFn,
+    acceptInvitation: acceptInvitationFn,
     refreshUser,
-  }), [user, isLoading, signUp, signIn, signOut, verifyEmailFn, forgotPasswordFn, resetPasswordFn, refreshUser])
+  }), [user, isLoading, signUp, signIn, signOut, verifyEmailFn, forgotPasswordFn, resetPasswordFn, inviteFn, acceptInvitationFn, refreshUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

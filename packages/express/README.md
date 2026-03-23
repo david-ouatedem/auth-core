@@ -52,6 +52,7 @@ Returns:
 - **`auth.router(options?)`** Express Router with all auth endpoints
 - **`auth.middleware()`** Protects routes, attaches `req.user`, returns 401 if unauthenticated
 - **`auth.optionalMiddleware()`** Attaches `req.user` if token is valid, doesn't reject unauthenticated requests
+- **`auth.requireRole(...roles)`** Checks `req.user.role` against the allowed roles, returns 403 if not allowed. Must be used after `auth.middleware()`
 
 ### Router Options
 
@@ -76,6 +77,26 @@ When mounted at `/auth`:
 | POST | `/auth/verify-email` | `{ token }` | `{ message }` |
 | POST | `/auth/forgot-password` | `{ email }` | `{ message }` |
 | POST | `/auth/reset-password` | `{ token, password }` | `{ message }` |
+| POST | `/auth/invite` | `{ email, role? }` | `{ message }` |
+| POST | `/auth/accept-invitation` | `{ token, password }` | `{ user, token }` |
+
+### Role-Based Access Control
+
+```ts
+// Protect a route so only admins can access it
+app.get('/admin', auth.middleware(), auth.requireRole('admin'), (req, res) => {
+  res.json({ message: 'Admin area' })
+})
+
+// Allow multiple roles
+app.get('/staff', auth.middleware(), auth.requireRole('admin', 'editor'), (req, res) => {
+  res.json({ message: 'Staff area' })
+})
+```
+
+### Invitation
+
+When the `'invitation'` feature is enabled, `POST /auth/invite` (protected) and `POST /auth/accept-invitation` (public) routes are automatically mounted. The invite route creates a user with the given role and sends an invitation email.
 
 ## With Email Verification & Password Reset
 

@@ -14,6 +14,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic, types, and adapter interfaces |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
+| [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |
 | [`@authcore/react`](packages/react) | React SDK: `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
@@ -82,6 +83,49 @@ await app.register(auth.plugin(), { prefix: '/auth' })
 app.get('/dashboard', { preHandler: auth.authRequired() }, async (request) => {
   return { user: request.user }
 })
+```
+
+### Backend (NestJS)
+
+```bash
+npm install @authcore/nestjs @authcore/prisma-adapter
+```
+
+```ts
+import { Module } from '@nestjs/common'
+import { AuthModule } from '@authcore/nestjs'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+@Module({
+  imports: [
+    AuthModule.register({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Protect routes with guards and decorators:
+
+```ts
+import { Controller, Get, UseGuards } from '@nestjs/common'
+import { AuthGuard, RolesGuard, Roles, CurrentUser } from '@authcore/nestjs'
+import type { PublicUser } from '@authcore/nestjs'
+
+@Controller('admin')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
+export class AdminController {
+  @Get()
+  getAdmin(@CurrentUser() user: PublicUser) {
+    return { message: 'Admin area', user }
+  }
+}
 ```
 
 ### Frontend (React)
@@ -156,10 +200,13 @@ const auth = createAuth({
   },
 
   // Enable features
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
 
   // Password rules
   password: { minLength: 8 },
+
+  // RBAC
+  rbac: { defaultRole: 'user' },
 
   // Lifecycle callbacks
   callbacks: {
@@ -182,6 +229,37 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 | POST | `/verify-email` | Verify email with token |
 | POST | `/forgot-password` | Request password reset email |
 | POST | `/reset-password` | Reset password with token |
+| POST | `/invite` | Invite a user by email (requires auth) |
+| POST | `/accept-invitation` | Accept invitation, set password |
+
+## RBAC
+
+Every user has a `role` field (string, default `'user'`). The role is included in the JWT, so authorization checks don't need extra database lookups.
+
+```ts
+// Express
+app.get('/admin', auth.middleware(), auth.requireRole('admin'), handler)
+
+// Fastify
+app.get('/admin', { preHandler: [auth.authRequired(), auth.requireRole('admin')] }, handler)
+
+// NestJS
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
+```
+
+## Invitation
+
+Enable the `'invitation'` feature and configure an email provider. Authenticated users can invite new users by email with a pre-assigned role. The invited user receives a link to set their password.
+
+```ts
+// POST /auth/invite (requires auth)
+// Body: { email: "new@user.com", role: "editor" }
+
+// POST /auth/accept-invitation (public)
+// Body: { token: "...", password: "securepass123" }
+// Returns: { user, token }
+```
 
 ## Data Model
 
@@ -193,6 +271,7 @@ model User {
   email         String   @unique
   passwordHash  String
   emailVerified Boolean  @default(false)
+  role          String   @default("user")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   tokens        Token[]
@@ -212,6 +291,7 @@ enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
   SESSION
+  INVITATION
 }
 ```
 
@@ -229,7 +309,7 @@ See the [`@authcore/core` README](packages/core) for the adapter interfaces.
 
 - Passwords hashed with bcryptjs (12+ rounds)
 - Tokens are random, SHA-256 hashed before storage, compared with `crypto.timingSafeEqual`
-- Password reset tokens expire in 1 hour, email verification in 24 hours
+- Password reset tokens expire in 1 hour, email verification in 24 hours, invitation tokens in 48 hours
 - Forgot password always returns 200 (prevents email enumeration)
 - All inputs validated with Zod
 
