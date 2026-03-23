@@ -11,7 +11,7 @@
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-If you discover a security issue, email **security@authcore.dev** with:
+If you discover a security issue, email **davdev1400@gmail.com** with:
 
 1. A description of the vulnerability
 2. Steps to reproduce
