@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { DatabaseAdapter, CreateUserInput, CreateTokenInput, TokenType, User, Token } from '@authcore/core'
+import type { DatabaseAdapter, CreateUserInput, CreateTokenInput, TokenType, User, Token } from '@authcore/types'
 
 /**
  * Map Prisma's TokenType enum to AuthCore's TokenType union.

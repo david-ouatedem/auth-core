@@ -11,7 +11,9 @@ AuthCore gives you registration, login, logout, email verification, and password
 
 | Package | Description |
 |---------|-------------|
-| [`@authcore/core`](packages/core) | Framework-agnostic auth logic, types, and adapter interfaces |
+| [`@authcore/types`](packages/types) | Shared type definitions for adapters, config, and domain models |
+| [`@authcore/core`](packages/core) | Framework-agnostic auth logic and adapter interfaces |
+| [`@authcore/core-web`](packages/core-web) | Framework-agnostic web auth service (HTTP client, session persistence) |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
 | [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |
@@ -32,7 +34,7 @@ Or set things up manually:
 ### Backend (Express)
 
 ```bash
-npm install @authcore/express @authcore/prisma-adapter
+npm install @authcore/express @authcore/prisma-adapter @authcore/types
 ```
 
 ```ts
@@ -64,7 +66,7 @@ app.listen(3000)
 ### Backend (Fastify)
 
 ```bash
-npm install @authcore/fastify @authcore/prisma-adapter
+npm install @authcore/fastify @authcore/prisma-adapter @authcore/types
 ```
 
 ```ts
@@ -88,7 +90,7 @@ app.get('/dashboard', { preHandler: auth.authRequired() }, async (request) => {
 ### Backend (NestJS)
 
 ```bash
-npm install @authcore/nestjs @authcore/prisma-adapter
+npm install @authcore/nestjs @authcore/prisma-adapter @authcore/types
 ```
 
 ```ts
@@ -130,8 +132,10 @@ export class AdminController {
 
 ### Frontend (React)
 
+`@authcore/react` is built on top of `@authcore/core-web`, a framework-agnostic web auth service that handles HTTP communication and session persistence.
+
 ```bash
-npm install @authcore/react
+npm install @authcore/react @authcore/types
 ```
 
 ```tsx
@@ -146,9 +150,10 @@ function App() {
 }
 
 function Main() {
-  const { user, isAuthenticated, isLoading, signIn, signOut } = useAuth()
+  const { user, isAuthenticated, isLoading, error, signIn, signUp, signOut } = useAuth()
 
   if (isLoading) return <p>Loading...</p>
+  if (error) return <p>Error: {error}</p>
   if (!isAuthenticated) return <button onClick={() => signIn('user@example.com', 'password')}>Sign In</button>
 
   return (
@@ -158,6 +163,31 @@ function Main() {
     </div>
   )
 }
+```
+
+If you need direct access to the web auth service without React, use `@authcore/core-web`:
+
+```bash
+npm install @authcore/core-web @authcore/types
+```
+
+```ts
+import { AuthWebService } from '@authcore/core-web'
+
+const auth = new AuthWebService({
+  baseUrl: 'http://localhost:3000/auth',
+  mode: 'api',
+  persistSession: true,
+  storageKey: 'authcore_token',
+  user: null,
+  token: '',
+  isAuthenticated: false,
+  isLoading: false,
+  error: null,
+})
+
+await auth.signIn({ email: 'user@example.com', password: 'password' })
+console.log(auth.getState().user)
 ```
 
 ## Environment Setup
@@ -319,7 +349,7 @@ See the [`@authcore/core` README](packages/core) for the adapter interfaces.
 git clone https://github.com/david-ouatedem/auth-core
 cd auth-core
 pnpm install
-pnpm build     # builds all packages in dependency order
+pnpm build     # builds all packages in dependency order (types → core/core-web → adapters/react)
 pnpm test      # runs all tests
 ```
 

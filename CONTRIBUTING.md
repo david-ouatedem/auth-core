@@ -7,7 +7,7 @@ Thanks for your interest in contributing to AuthCore! This guide will help you g
 ### Prerequisites
 
 - Node.js >= 18
-- pnpm >= 8
+- pnpm >= 10
 - Docker (for integration tests)
 
 ### Setup
@@ -30,7 +30,7 @@ docker compose up -d
 DATABASE_URL="postgresql://authcore:authcore_secret@localhost:5433/authcore_test" \
   npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma
 
-# Build all packages
+# Build all packages (types → core-web → everything else)
 pnpm build
 
 # Run all tests
@@ -42,14 +42,16 @@ pnpm test
 This is a pnpm monorepo. Packages are in `packages/` and build in dependency order:
 
 ```
-@authcore/core              (standalone)
+@authcore/types             (standalone — shared type definitions)
+@authcore/core              (depends on types)
+@authcore/core-web          (depends on types — framework-agnostic web auth service)
 @authcore/prisma-adapter    (depends on core)
 @authcore/resend-adapter    (standalone)
 @authcore/nodemailer-adapter(standalone)
 @authcore/express           (depends on core)
 @authcore/fastify           (depends on core)
 @authcore/nestjs            (depends on core)
-@authcore/react             (standalone)
+@authcore/react             (depends on core-web, types)
 create-authcore-app         (standalone)
 ```
 
@@ -98,8 +100,16 @@ Check the [issues](https://github.com/david-ouatedem/auth-core/issues) page. Loo
 ### 2. Create a branch
 
 ```bash
-git checkout develop
-git pull origin develop
+# 1. Fork the repo on GitHub (https://github.com/david-ouatedem/auth-core)
+
+# 2. Clone your fork
+git clone https://github.com/your-username/auth-core.git
+cd auth-core
+
+# 3. Add the original repo as upstream
+git remote add upstream https://github.com/david-ouatedem/auth-core.git
+
+# 4. Create a branch for your feature
 git checkout -b feat/your-feature
 ```
 
@@ -121,10 +131,12 @@ Follow the patterns already in the codebase:
 
 ### 5. Submit a pull request
 
-- Target the `develop` branch
+- Target the `develop` branch of the original repo
 - Fill in the PR template
 - Keep PRs focused. One feature or fix per PR.
 - Make sure `pnpm build` and `pnpm test` pass locally before pushing
+- Push to your fork: `git push -u origin feat/your-feature`
+- Open a Pull Request from your branch on GitHub
 
 ## Adding a New Database Adapter
 

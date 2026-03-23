@@ -1,4 +1,4 @@
-import type { AuthCoreConfig, PublicUser } from './types.js'
+import type { AuthCoreConfig, PublicUser } from '@authcore/types'
 import { hashPassword, verifyPassword } from './utils/password.js'
 import { signJwt, verifyJwt } from './utils/token.js'
 import {

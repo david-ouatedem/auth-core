@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createAuth, AuthError } from '../auth.js'
-import type { DatabaseAdapter } from '../adapters/database.interface.js'
-import type { User, Token } from '../types.js'
+import type { DatabaseAdapter, User, Token } from '@authcore/types'
 
 // ---- helpers ----
 

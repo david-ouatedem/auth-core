@@ -8,5 +8,5 @@ export { CurrentUser, Roles, Public } from './decorators.js'
 export { AUTH_CORE } from './constants.js'
 
 // Re-export core types that consumers will need
-export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/core'
+export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/types'
 export { AuthError } from '@authcore/core'

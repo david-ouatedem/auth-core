@@ -13,6 +13,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.35
+      prisma:
+        specifier: 5.22.0
+        version: 5.22.0
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -22,6 +25,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -33,11 +39,27 @@ importers:
         version: 3.25.76
     devDependencies:
       '@types/bcryptjs':
-        specifier: ^2.4.0
+        specifier: ^2.4.3
         version: 2.4.6
       '@types/jsonwebtoken':
         specifier: ^9.0.6
         version: 9.0.10
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.35
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@20.19.35)(jsdom@24.1.3)
+
+  packages/core-web:
+    dependencies:
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
+    devDependencies:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.35
@@ -66,6 +88,9 @@ importers:
       '@authcore/core':
         specifier: workspace:^
         version: link:../core
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
       express:
         specifier: ^4.21.0
         version: 4.22.1
@@ -106,6 +131,9 @@ importers:
       '@authcore/core':
         specifier: workspace:^
         version: link:../core
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
       '@fastify/cookie':
         specifier: ^11.0.0
         version: 11.0.2
@@ -140,6 +168,9 @@ importers:
       '@authcore/core':
         specifier: workspace:^
         version: link:../core
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
     devDependencies:
       '@authcore/prisma-adapter':
         specifier: workspace:^
@@ -195,9 +226,9 @@ importers:
 
   packages/nodemailer-adapter:
     dependencies:
-      '@authcore/core':
+      '@authcore/types':
         specifier: workspace:^
-        version: link:../core
+        version: link:../types
     devDependencies:
       '@types/nodemailer':
         specifier: ^6.4.0
@@ -214,9 +245,9 @@ importers:
 
   packages/prisma-adapter:
     dependencies:
-      '@authcore/core':
+      '@authcore/types':
         specifier: workspace:^
-        version: link:../core
+        version: link:../types
     devDependencies:
       '@prisma/client':
         specifier: ^5.22.0
@@ -239,9 +270,12 @@ importers:
 
   packages/react:
     dependencies:
-      '@authcore/core':
+      '@authcore/core-web':
         specifier: workspace:^
-        version: link:../core
+        version: link:../core-web
+      '@authcore/types':
+        specifier: workspace:^
+        version: link:../types
     devDependencies:
       '@testing-library/react':
         specifier: ^16.0.0
@@ -267,9 +301,9 @@ importers:
 
   packages/resend-adapter:
     dependencies:
-      '@authcore/core':
+      '@authcore/types':
         specifier: workspace:^
-        version: link:../core
+        version: link:../types
     devDependencies:
       resend:
         specifier: ^4.0.0
@@ -280,6 +314,12 @@ importers:
       vitest:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.35)(jsdom@24.1.3)
+
+  packages/types:
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
 
 packages:
 

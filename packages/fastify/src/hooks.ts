@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { AuthCore } from '@authcore/core'
-import type { PublicUser } from '@authcore/core'
+import type { PublicUser } from '@authcore/types'
 import '@fastify/cookie'
 
 declare module 'fastify' {

@@ -109,13 +109,13 @@ describe('useAuth', () => {
       returnedUser = await result.current.signUp('test@example.com', 'password123')
     })
 
-    expect(returnedUser).toEqual(mockUser)
+    expect(returnedUser).toEqual({ user: mockUser, token: 'jwt-token-123' })
     expect(result.current.user).toEqual(mockUser)
     expect(result.current.isAuthenticated).toBe(true)
 
     // Verify the register call
-    const registerCall = fetchMock.mock.calls.find(
-      (c) => (c[1] as RequestInit | undefined)?.method === 'POST',
+    const registerCall = (fetchMock as any).mock.calls.find(
+      (c: any) => (c[1] as RequestInit | undefined)?.method === 'POST',
     )
     expect(registerCall).toBeDefined()
     expect(JSON.parse((registerCall![1] as RequestInit).body as string)).toEqual({
@@ -206,8 +206,8 @@ describe('useAuth', () => {
       await result.current.forgotPassword('test@example.com')
     })
 
-    const forgotCall = fetchMock.mock.calls.find(
-      (c) => String(c[0]).includes('/forgot-password'),
+    const forgotCall = (fetchMock as any).mock.calls.find(
+      (c: any) => String(c[0]).includes('/forgot-password'),
     )
     expect(forgotCall).toBeDefined()
   })
@@ -232,8 +232,8 @@ describe('useAuth', () => {
       expect(fetchMock).toHaveBeenCalled()
     })
 
-    const meCall = fetchMock.mock.calls.find(
-      (c) => String(c[0]).includes('/me'),
+    const meCall = (fetchMock as any).mock.calls.find(
+      (c: any) => String(c[0]).includes('/me'),
     )
     expect(meCall).toBeDefined()
     expect((meCall![1] as RequestInit).credentials).toBe('include')

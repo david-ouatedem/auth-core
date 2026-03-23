@@ -1,6 +1,4 @@
-import type { DatabaseAdapter } from '../adapters/database.interface.js'
-import type { EmailAdapter } from '../adapters/email.interface.js'
-import type { Token } from '../types.js'
+import type { DatabaseAdapter, EmailAdapter, Token } from '@authcore/types'
 import { generateOpaqueToken, hashToken } from '../utils/token.js'
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours

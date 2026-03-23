@@ -1,21 +1,3 @@
-// Types
-export type {
-  User,
-  Token,
-  TokenType,
-  CreateUserInput,
-  CreateTokenInput,
-  PublicUser,
-  SessionConfig,
-  EmailConfig,
-  AuthCallbacks,
-  AuthCoreConfig,
-} from './types.js'
-
-// Adapter interfaces
-export type { DatabaseAdapter } from './adapters/database.interface.js'
-export type { EmailAdapter } from './adapters/email.interface.js'
-
 // Utilities
 export { hashPassword, verifyPassword } from './utils/password.js'
 export {
@@ -53,3 +35,5 @@ export { createInvitation, acceptInvitation } from './features/invitation.js'
 // Auth factory
 export { createAuth, AuthError } from './auth.js'
 export type { AuthCore } from './auth.js'
+
+export * from '@authcore/types'

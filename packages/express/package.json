@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@authcore/core": "workspace:^",
+    "@authcore/types": "workspace:^",
     "express": "^4.21.0"
   },
   "devDependencies": {

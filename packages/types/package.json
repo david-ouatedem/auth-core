@@ -1,0 +1,24 @@
+{
+  "name": "@authcore/types",
+  "version": "0.5.4",
+  "description": "Core type definitions for AuthCore",
+  "license": "MIT",
+  "author": "David Ouatedem",
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

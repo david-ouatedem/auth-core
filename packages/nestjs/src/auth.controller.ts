@@ -16,7 +16,7 @@ import { AuthError } from '@authcore/core'
 import { AuthGuard } from './auth.guard.js'
 import { CurrentUser } from './decorators.js'
 import { AUTH_CORE, AUTH_MODULE_OPTIONS } from './constants.js'
-import type { PublicUser } from '@authcore/core'
+import type { PublicUser } from '@authcore/types'
 
 interface ModuleOptions {
   baseUrl?: string

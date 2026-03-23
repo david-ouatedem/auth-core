@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express'
 import type { AuthCore } from '@authcore/core'
-import type { PublicUser } from '@authcore/core'
+import type { PublicUser } from '@authcore/types'
 
 // Augment Express Request type to include `user`
 declare global {

@@ -1,17 +1,28 @@
 {
-  "name": "@authcore/core",
-  "version": "0.6.0",
-  "description": "Framework-agnostic authentication core for AuthCore",
+  "name": "@authcore/core-web",
+  "version": "0.5.4",
+  "description": "Web Agnostic Authentication core for AuthCore",
   "license": "MIT",
-  "author": "David Ouatedem",
+  "author": "Phanuel Wayne",
   "repository": {
     "type": "git",
     "url": "https://github.com/david-ouatedem/auth-core",
-    "directory": "packages/core"
+    "directory": "packages/core-web"
   },
-  "keywords": ["auth", "authentication", "authcore", "jwt", "bcrypt"],
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "auth",
+    "authentication",
+    "authcore",
+    "jwt",
+    "bcrypt"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,14 +39,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/types": "workspace:^",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "zod": "^3.23.0"
+    "@authcore/types": "workspace:^"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.3",
-    "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"

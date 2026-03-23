@@ -1,5 +1,5 @@
 import { Resend } from 'resend'
-import type { EmailAdapter } from '@authcore/core'
+import type { EmailAdapter } from '@authcore/types'
 
 /**
  * Create an EmailAdapter backed by the Resend email API.
