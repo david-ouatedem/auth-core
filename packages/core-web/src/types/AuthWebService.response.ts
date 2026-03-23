@@ -1,5 +1,5 @@
 import type { PublicUser } from "@authcore/types";
-import type { AuthWebStateInterface } from "./AuthWebState.interface.";
+import { AuthWebStateInterface } from "./AuthWebState.interface.js";
 
 export interface AuthWebServiceResponseInterface {
     getState(): AuthWebStateInterface

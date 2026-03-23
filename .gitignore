@@ -6,6 +6,7 @@ dist/
 *.d.ts
 *.d.ts.map
 *.js.map
+packages/*/src/**/*.js
 
 # Environment variables
 .env

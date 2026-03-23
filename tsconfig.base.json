@@ -13,12 +13,13 @@
     "forceConsistentCasingInFileNames": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@authcore/*": ["packages/*/src"]
+      "@authcore/*": ["packages/*/dist", "packages/*/src"]
     }
   }
 }

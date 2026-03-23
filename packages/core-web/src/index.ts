@@ -1,4 +1,3 @@
-export * from '@authcore/types'
 export { AuthWebService } from "./AuthWebService.js";
 export { createFetchAuthClient } from "./http-client/createFetchAuthClient.js";
 export type { AuthWebRoutesInterface } from "./types/AuthWebRoutes.interface.js";
