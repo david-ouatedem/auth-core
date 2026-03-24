@@ -91,9 +91,6 @@ importers:
       '@authcore/types':
         specifier: workspace:^
         version: link:../types
-      express:
-        specifier: ^4.21.0
-        version: 4.22.1
     devDependencies:
       '@authcore/prisma-adapter':
         specifier: workspace:^
@@ -113,6 +110,9 @@ importers:
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
+      express:
+        specifier: ^4.21.0
+        version: 4.22.1
       prisma:
         specifier: ^5.22.0
         version: 5.22.0
@@ -134,16 +134,13 @@ importers:
       '@authcore/types':
         specifier: workspace:^
         version: link:../types
-      '@fastify/cookie':
-        specifier: ^11.0.0
-        version: 11.0.2
-      fastify:
-        specifier: ^5.0.0
-        version: 5.7.4
     devDependencies:
       '@authcore/prisma-adapter':
         specifier: workspace:^
         version: link:../prisma-adapter
+      '@fastify/cookie':
+        specifier: ^11.0.0
+        version: 11.0.2
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
@@ -153,6 +150,9 @@ importers:
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
+      fastify:
+        specifier: ^5.0.0
+        version: 5.7.4
       prisma:
         specifier: ^5.22.0
         version: 5.22.0

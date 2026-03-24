@@ -7,8 +7,8 @@
     "db:push": "prisma db push"
   },
   "dependencies": {
-    "@authcore/express": "^0.5.0",
-    "@authcore/prisma-adapter": "^0.5.0",
+    "@authcore/express": "^0.6.0",
+    "@authcore/prisma-adapter": "^0.6.0",
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
     "express": "^4.21.0"
