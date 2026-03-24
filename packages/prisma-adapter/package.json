@@ -9,9 +9,20 @@
     "url": "https://github.com/david-ouatedem/auth-core",
     "directory": "packages/prisma-adapter"
   },
-  "keywords": ["auth", "authcore", "prisma", "database", "adapter"],
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "auth",
+    "authcore",
+    "prisma",
+    "database",
+    "adapter"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,6 +48,7 @@
     "@prisma/client": "^5.0.0"
   },
   "devDependencies": {
+    "@authcore/core": "^0.6.0",
     "@prisma/client": "^5.22.0",
     "@types/node": "^20.0.0",
     "dotenv": "^16.4.0",

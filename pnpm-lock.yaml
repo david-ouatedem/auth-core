@@ -249,6 +249,9 @@ importers:
         specifier: workspace:^
         version: link:../types
     devDependencies:
+      '@authcore/core':
+        specifier: ^0.6.0
+        version: 0.6.0
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
@@ -325,6 +328,9 @@ packages:
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
+
+  '@authcore/core@0.6.0':
+    resolution: {integrity: sha512-0FPjMPrdIWFNAp9cVhkGZqMCiLZp4JgnOFPJWLOlhOdI/jFirc5Lz9mBioUPHzUduzcqDw0GNo1DivSs7Dc6DA==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -2134,6 +2140,12 @@ snapshots:
       '@csstools/css-parser-algorithms': 3.0.5(@csstools/css-tokenizer@3.0.4)
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
+
+  '@authcore/core@0.6.0':
+    dependencies:
+      bcryptjs: 2.4.3
+      jsonwebtoken: 9.0.3
+      zod: 3.25.76
 
   '@babel/code-frame@7.29.0':
     dependencies:
