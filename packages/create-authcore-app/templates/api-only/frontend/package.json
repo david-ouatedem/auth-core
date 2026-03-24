@@ -7,7 +7,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@authcore/react": "^0.6.0",
+    "@authcore/react": "^0.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

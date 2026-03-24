@@ -1,6 +1,6 @@
 {
   "name": "@authcore/core-web",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Web Agnostic Authentication core for AuthCore",
   "license": "MIT",
   "author": "Phanuel Wayne",

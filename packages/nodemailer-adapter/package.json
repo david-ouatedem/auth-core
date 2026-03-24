@@ -1,6 +1,6 @@
 {
   "name": "@authcore/nodemailer-adapter",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Nodemailer email adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
