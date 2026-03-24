@@ -7,6 +7,7 @@ export interface AuthContextValue {
   user: PublicUser | null
   isLoading: boolean
   isAuthenticated: boolean
+  error: string | null
   signUp(email: string, password: string): Promise<AuthResponse>
   signIn(email: string, password: string): Promise<AuthResponse>
   signOut(): Promise<void>
@@ -69,6 +70,7 @@ export function AuthProvider({
     user: state.user,
     isLoading: state.isLoading,
     isAuthenticated: state.isAuthenticated,
+    error: state.error,
     signUp: (email, password) => service.signUp({ email, password }),
     signIn: (email, password) => service.signIn({ email, password }),
     signOut: () => service.signOut(),

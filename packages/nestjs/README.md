@@ -8,6 +8,11 @@
 npm install @authcore/nestjs @authcore/prisma-adapter
 ```
 
+Peer dependencies (already installed in any NestJS project):
+- `@nestjs/common` (^10.0.0 or ^11.0.0)
+- `@nestjs/core` (^10.0.0 or ^11.0.0)
+- `reflect-metadata` (^0.1.13 or ^0.2.0)
+
 ## Usage
 
 ### Module Setup
