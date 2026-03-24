@@ -1,78 +1,84 @@
-import { createContext, useContext, useSyncExternalStore, useMemo, useEffect } from 'react';
-import { AuthWebService, type AuthWebRoutesInterface } from '@authcore/core-web';
-import type { PublicUser } from '@authcore/types';
+import { createContext, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { AuthWebService } from '@authcore/core-web'
+import type { AuthWebRoutesInterface, AuthResponse } from '@authcore/core-web'
+import type { PublicUser } from '@authcore/types'
 
 export interface AuthContextValue {
-    user: PublicUser | null
-    isLoading: boolean
-    isAuthenticated: boolean
-    signUp<T extends { user: PublicUser; token?: string }>(email: string, password: string): Promise<T | undefined>
-    signIn<T extends { user: PublicUser; token?: string }>(email: string, password: string): Promise<T | undefined>
-    signOut(): Promise<void>
-    verifyEmail(token: string): Promise<void>
-    forgotPassword(email: string): Promise<void>
-    resetPassword(token: string, password: string): Promise<void>
-    refreshUser(): Promise<void>
+  user: PublicUser | null
+  isLoading: boolean
+  isAuthenticated: boolean
+  signUp(email: string, password: string): Promise<AuthResponse>
+  signIn(email: string, password: string): Promise<AuthResponse>
+  signOut(): Promise<void>
+  verifyEmail(token: string): Promise<void>
+  forgotPassword(email: string): Promise<void>
+  resetPassword(token: string, password: string): Promise<void>
+  invite(email: string, role?: string): Promise<void>
+  acceptInvitation(token: string, password: string): Promise<AuthResponse>
+  refreshUser(): Promise<void>
 }
 
-export const AuthContext = createContext<AuthContextValue | null>(null);
+export const AuthContext = createContext<AuthContextValue | null>(null)
+
 export interface AuthProviderProps {
-    baseUrl: string
-    mode?: 'api' | 'cookie'
-    storageKey?: string
-    persistSession?: boolean
-    routes?: AuthWebRoutesInterface
-    children: React.ReactNode
+  baseUrl: string
+  mode?: 'api' | 'cookie'
+  storageKey?: string
+  persistSession?: boolean
+  routes?: AuthWebRoutesInterface
+  children: React.ReactNode
 }
-export const AuthProvider = ({ baseUrl,
-    mode = 'api',
-    storageKey = 'authcore_token',
-    persistSession = true,
-    routes,
-    children }: AuthProviderProps) => {
-    const webCoreInstance = useMemo(() => new AuthWebService({
-        baseUrl,
-        mode,
-        persistSession,
-        storageKey,
-        token: '',
-        user: null,
-        error: null,
-        isLoading: true,
-        isAuthenticated: false,
-    }, routes), [baseUrl, mode, storageKey, persistSession, routes]);
 
-    const state = useSyncExternalStore(
-        (callback) => webCoreInstance.subscribe(callback),
-        () => webCoreInstance.getState()
-    );
+export function AuthProvider({
+  baseUrl,
+  mode = 'api',
+  storageKey = 'authcore_token',
+  persistSession = true,
+  routes,
+  children,
+}: AuthProviderProps) {
+  const service = useMemo(
+    () =>
+      new AuthWebService(
+        {
+          baseUrl,
+          mode,
+          persistSession,
+          storageKey,
+          token: '',
+          user: null,
+          error: null,
+          isLoading: true,
+          isAuthenticated: false,
+        },
+        routes,
+      ),
+    [baseUrl, mode, storageKey, persistSession, routes],
+  )
 
-    useEffect(() => {
-        webCoreInstance.refreshUser().catch(() => {});
-    }, [webCoreInstance]);
+  const state = useSyncExternalStore(
+    (cb) => service.subscribe(cb),
+    () => service.getState(),
+  )
 
-    return <AuthContext.Provider value={{
-        ...state,
-        signIn: async <T extends { user: PublicUser; token?: string }>(email: string, password: string) => {
-            return webCoreInstance.signIn<T>({ email, password });
-        },
-        signUp: async <T extends { user: PublicUser; token?: string }>(email: string, password: string) => {
-            return webCoreInstance.signUp<T>({ email, password });
-        },
-        signOut: async () => {
-            return webCoreInstance.signOut();
-        },
-        verifyEmail: async (token: string) => {
-            return webCoreInstance.verifyEmail(token);
-        },
-        forgotPassword: async (email: string) => {
-            return webCoreInstance.forgotPassword(email);
-        },
-        resetPassword: async (token: string, password: string) => {
-            return webCoreInstance.resetPassword(token, password);
-        },
-        refreshUser: async () => {
-            return webCoreInstance.refreshUser();
-        }
-    }}>{children}</AuthContext.Provider>;
-};
+  useEffect(() => {
+    service.refreshUser().catch(() => {})
+  }, [service])
+
+  const value: AuthContextValue = {
+    user: state.user,
+    isLoading: state.isLoading,
+    isAuthenticated: state.isAuthenticated,
+    signUp: (email, password) => service.signUp({ email, password }),
+    signIn: (email, password) => service.signIn({ email, password }),
+    signOut: () => service.signOut(),
+    verifyEmail: (token) => service.verifyEmail(token),
+    forgotPassword: (email) => service.forgotPassword(email),
+    resetPassword: (token, password) => service.resetPassword(token, password),
+    invite: (email, role) => service.invite(email, role),
+    acceptInvitation: (token, password) => service.acceptInvitation(token, password),
+    refreshUser: () => service.refreshUser(),
+  }
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}

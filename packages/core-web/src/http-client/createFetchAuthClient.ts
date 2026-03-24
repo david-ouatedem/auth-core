@@ -3,8 +3,7 @@
  * Uses native fetch — no external dependencies.
  */
 
-import { HttpClient } from "../types/HttpClients.interface.js"
-
+import type { HttpClient } from '../types/HttpClients.interface.js'
 
 export interface AuthClientConfig {
   baseUrl: string
