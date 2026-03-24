@@ -32,9 +32,10 @@ function App() {
 import { useAuth } from '@authcore/react'
 
 function Main() {
-  const { user, isAuthenticated, isLoading, signIn, signUp, signOut } = useAuth()
+  const { user, isAuthenticated, isLoading, error, signIn, signUp, signOut } = useAuth()
 
   if (isLoading) return <p>Loading...</p>
+  if (error) return <p>Error: {error}</p>
 
   if (!isAuthenticated) {
     return (
@@ -123,14 +124,15 @@ const user = await acceptInvitation(token, 'mypassword123')
 | `user` | `PublicUser \| null` | Current user or null |
 | `isLoading` | `boolean` | True while restoring session |
 | `isAuthenticated` | `boolean` | True if user is logged in |
-| `signUp(email, password)` | `Promise<PublicUser>` | Register a new account |
-| `signIn(email, password)` | `Promise<PublicUser>` | Sign in |
+| `error` | `string \| null` | Last error message, or null |
+| `signUp(email, password)` | `Promise<AuthResponse>` | Register a new account |
+| `signIn(email, password)` | `Promise<AuthResponse>` | Sign in |
 | `signOut()` | `Promise<void>` | Sign out |
 | `forgotPassword(email)` | `Promise<void>` | Request password reset |
 | `resetPassword(token, password)` | `Promise<void>` | Reset password |
 | `verifyEmail(token)` | `Promise<void>` | Verify email address |
 | `invite(email, role?)` | `Promise<void>` | Invite a new user by email |
-| `acceptInvitation(token, password)` | `Promise<PublicUser>` | Accept an invitation |
+| `acceptInvitation(token, password)` | `Promise<AuthResponse>` | Accept an invitation |
 | `refreshUser()` | `Promise<void>` | Re-fetch current user |
 
 ### `<ProtectedRoute>`
@@ -140,6 +142,14 @@ const user = await acceptInvitation(token, 'mypassword123')
 | `children` | `ReactNode` | Content to show when authenticated |
 | `fallback` | `ReactNode` | Shown while loading |
 | `onUnauthenticated` | `() => void` | Called when user is not authenticated |
+
+## Using Types Directly
+
+`@authcore/types` is installed automatically as a dependency. If you need to use types like `PublicUser` in your own code:
+
+```ts
+import type { PublicUser } from '@authcore/types'
+```
 
 ## Cookie Mode (Monorepo)
 
