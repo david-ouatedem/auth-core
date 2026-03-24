@@ -10,12 +10,16 @@ Thanks for your interest in contributing to AuthCore! This guide will help you g
 - pnpm >= 10
 - Docker (for integration tests)
 
-### Setup
+### Fork the repository
+
+1. Go to [github.com/david-ouatedem/auth-core](https://github.com/david-ouatedem/auth-core)
+2. Click the **Fork** button in the top right
+3. Clone your fork and set up the upstream remote:
 
 ```bash
-# Clone the repo
-git clone https://github.com/david-ouatedem/auth-core.git
+git clone https://github.com/<your-username>/auth-core.git
 cd auth-core
+git remote add upstream https://github.com/david-ouatedem/auth-core.git
 
 # Install dependencies
 pnpm install
@@ -28,7 +32,7 @@ docker compose up -d
 
 # Push the Prisma schema to the test database
 DATABASE_URL="postgresql://authcore:authcore_secret@localhost:5433/authcore_test" \
-  npx prisma db push --schema packages/prisma-adapter/prisma/schema.prisma
+  pnpm --filter @authcore/prisma-adapter exec prisma db push
 
 # Build all packages (types → core-web → everything else)
 pnpm build
