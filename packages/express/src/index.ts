@@ -1,5 +1,5 @@
 import { createAuth as createCoreAuth } from '@authcore/core'
-import type { AuthCoreConfig } from '@authcore/core'
+import type { AuthCoreConfig } from '@authcore/types'
 import { createAuthRouter } from './router.js'
 import type { RouterConfig } from './router.js'
 import { createAuthMiddleware, createOptionalAuthMiddleware } from './middleware.js'
@@ -101,5 +101,5 @@ export function createAuth(config: AuthCoreConfig): ExpressAuth {
 }
 
 // Re-export core types that consumers will need
-export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/core'
+export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/types'
 export { AuthError } from '@authcore/core'

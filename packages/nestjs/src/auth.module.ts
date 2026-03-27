@@ -1,7 +1,7 @@
 import { Module, Global } from '@nestjs/common'
 import type { DynamicModule } from '@nestjs/common'
 import { createAuth as createCoreAuth } from '@authcore/core'
-import type { AuthCoreConfig } from '@authcore/core'
+import type { AuthCoreConfig } from '@authcore/types'
 import { AuthController } from './auth.controller.js'
 import { AuthGuard } from './auth.guard.js'
 import { AuthOptionalGuard } from './auth-optional.guard.js'

@@ -1,6 +1,6 @@
 {
   "name": "@authcore/prisma-adapter",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Prisma database adapter for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",
@@ -9,9 +9,20 @@
     "url": "https://github.com/david-ouatedem/auth-core",
     "directory": "packages/prisma-adapter"
   },
-  "keywords": ["auth", "authcore", "prisma", "database", "adapter"],
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "auth",
+    "authcore",
+    "prisma",
+    "database",
+    "adapter"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,12 +42,13 @@
     "db:generate": "prisma generate --schema ./prisma/schema.prisma"
   },
   "dependencies": {
-    "@authcore/core": "workspace:^"
+    "@authcore/types": "workspace:^"
   },
   "peerDependencies": {
     "@prisma/client": "^5.0.0"
   },
   "devDependencies": {
+    "@authcore/core": "^0.6.0",
     "@prisma/client": "^5.22.0",
     "@types/node": "^20.0.0",
     "dotenv": "^16.4.0",

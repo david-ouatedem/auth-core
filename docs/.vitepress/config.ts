@@ -3,6 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'AuthCore',
   description: 'A Devise-inspired, framework-agnostic authentication library for the JS ecosystem',
+  base: '/auth-core/',
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/getting-started' },
@@ -31,6 +32,7 @@ export default defineConfig({
         items: [
           { text: 'Express', link: '/integrations/express' },
           { text: 'Fastify', link: '/integrations/fastify' },
+          { text: 'NestJS', link: '/integrations/nestjs' },
           { text: 'React', link: '/integrations/react' },
         ],
       },

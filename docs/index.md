@@ -4,7 +4,7 @@ layout: home
 hero:
   name: AuthCore
   text: Framework-Agnostic Authentication
-  tagline: A Devise-inspired auth library for the JS ecosystem. Drop-in adapters for Express, Fastify, React, Prisma, and more.
+  tagline: A Devise-inspired auth library for the JS ecosystem. Drop-in adapters for Express, Fastify, NestJS, React, Prisma, and more.
   actions:
     - theme: brand
       text: Get Started

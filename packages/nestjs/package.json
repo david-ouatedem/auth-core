@@ -1,6 +1,6 @@
 {
   "name": "@authcore/nestjs",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "NestJS adapter for AuthCore. Dynamic module, guards, and decorators.",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,7 +21,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/core": "workspace:^"
+    "@authcore/core": "workspace:^",
+    "@authcore/types": "workspace:^"
   },
   "peerDependencies": {
     "@nestjs/common": "^10.0.0 || ^11.0.0",

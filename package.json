@@ -4,7 +4,7 @@
   "version": "0.6.0",
   "description": "Devise-inspired, framework-agnostic authentication library for the JS ecosystem",
   "scripts": {
-    "build": "pnpm --filter @authcore/core build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/nestjs build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",
+    "build": "pnpm --filter @authcore/types build && pnpm --filter @authcore/core build && pnpm --filter @authcore/core-web build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/nestjs build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",
     "publish:all": "pnpm -r publish --access public",
     "publish:dry": "pnpm -r publish --access public --dry-run",
     "dev": "pnpm --recursive --parallel dev",
@@ -12,11 +12,12 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "lint": "pnpm -r exec tsc --noEmit",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs"
+    "docs:dev": "pnpm --filter authcore-docs dev",
+    "docs:build": "pnpm --filter authcore-docs build"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "prisma": "5.22.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   },

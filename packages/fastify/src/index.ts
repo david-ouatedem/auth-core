@@ -1,5 +1,5 @@
 import { createAuth as createCoreAuth } from '@authcore/core'
-import type { AuthCoreConfig } from '@authcore/core'
+import type { AuthCoreConfig } from '@authcore/types'
 import type { FastifyPluginAsync, preHandlerHookHandler } from 'fastify'
 import { createAuthPlugin } from './plugin.js'
 import type { PluginConfig } from './plugin.js'
@@ -105,5 +105,5 @@ export function createAuth(config: AuthCoreConfig): FastifyAuth {
 }
 
 // Re-export core types that consumers will need
-export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/core'
+export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/types'
 export { AuthError } from '@authcore/core'

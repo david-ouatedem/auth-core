@@ -9,7 +9,7 @@ import { AUTH_CORE, IS_PUBLIC_KEY } from './constants.js'
  * Extracts the Bearer token from the Authorization header,
  * validates it, and attaches the user to `request.user`.
  *
- * Returns 401 if no token is present or the token is invalid.
+ * Returns 403 if no token is present or the token is invalid.
  *
  * @example
  * ```ts

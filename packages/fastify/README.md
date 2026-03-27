@@ -12,12 +12,15 @@ npm install @authcore/fastify @authcore/prisma-adapter
 
 ```ts
 import Fastify from 'fastify'
+import cookie from '@fastify/cookie'
 import { createAuth } from '@authcore/fastify'
 import { prismaAdapter } from '@authcore/prisma-adapter'
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 const app = Fastify()
+await app.register(cookie)
+
 const auth = createAuth({
   db: prismaAdapter(prisma),
   session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },

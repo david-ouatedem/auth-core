@@ -1,6 +1,6 @@
 {
   "name": "@authcore/react",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "React SDK for AuthCore — AuthProvider, useAuth, ProtectedRoute",
   "author": "David Ouatedem",
   "repository": {
@@ -26,7 +26,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@authcore/core": "workspace:^"
+    "@authcore/core-web": "workspace:^",
+    "@authcore/types": "workspace:^"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
