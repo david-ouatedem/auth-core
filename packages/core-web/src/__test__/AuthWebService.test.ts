@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AuthWebService } from '../AuthWebService.js';
+import type { PublicUser } from '@authcore/types';
 
 const mockUser = {
   id: 'user-1',
@@ -323,5 +324,185 @@ describe('AuthWebService', () => {
       (c: any) => String(c[0]).includes('/reset-password')
     );
     expect(resetCall).toBeDefined();
+  });
+});
+
+describe('AuthWebService — transformers', () => {
+  const baseState = {
+    baseUrl: 'http://api.example.com',
+    mode: 'api' as const,
+    persistSession: false,
+    storageKey: 'authcore_token',
+    token: null,
+    user: null,
+    error: null,
+    isLoading: false,
+    isAuthenticated: false,
+  };
+
+  beforeEach(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.clear();
+    } else {
+      const store: Record<string, string> = {};
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => store[key] || null,
+        setItem: (key: string, value: string) => { store[key] = value; },
+        removeItem: (key: string) => { delete store[key]; },
+        clear: () => { Object.keys(store).forEach(k => delete store[k]); }
+      });
+    }
+    vi.stubGlobal('window', {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('transformAuthResponse maps custom sign-in response shape', async () => {
+    // Backend returns { data: { user }, access_token } instead of { user, token }
+    const backendResponse = { data: { user: mockUser }, access_token: 'custom-token' };
+    vi.stubGlobal('fetch', mockFetch({ 'POST /login': { status: 200, body: backendResponse } }));
+
+    const service = new AuthWebService(baseState, undefined, {
+      transformers: {
+        transformAuthResponse: (raw) => {
+          const r = raw as typeof backendResponse
+          return { user: r.data.user, token: r.access_token }
+        },
+      },
+    });
+
+    const result = await service.signIn({ email: 'test@example.com', password: 'pass' });
+
+    expect(result.user).toEqual(mockUser);
+    expect(result.token).toBe('custom-token');
+    expect(service.getState().user).toEqual(mockUser);
+    expect(service.getState().token).toBe('custom-token');
+    expect(service.getState().isAuthenticated).toBe(true);
+  });
+
+  it('transformAuthResponse maps custom sign-up response shape', async () => {
+    const backendResponse = { data: { user: mockUser }, access_token: 'signup-token' };
+    vi.stubGlobal('fetch', mockFetch({ 'POST /register': { status: 201, body: backendResponse } }));
+
+    const service = new AuthWebService(baseState, undefined, {
+      transformers: {
+        transformAuthResponse: (raw) => {
+          const r = raw as typeof backendResponse
+          return { user: r.data.user, token: r.access_token }
+        },
+      },
+    });
+
+    const result = await service.signUp({ email: 'test@example.com', password: 'pass' });
+
+    expect(result.user).toEqual(mockUser);
+    expect(result.token).toBe('signup-token');
+    expect(service.getState().isAuthenticated).toBe(true);
+  });
+
+  it('transformAuthResponse maps custom acceptInvitation response shape', async () => {
+    const backendResponse = { data: { user: mockUser }, access_token: 'invite-token' };
+    vi.stubGlobal('fetch', mockFetch({ 'POST /accept-invitation': { status: 200, body: backendResponse } }));
+
+    const service = new AuthWebService(baseState, undefined, {
+      transformers: {
+        transformAuthResponse: (raw) => {
+          const r = raw as typeof backendResponse
+          return { user: r.data.user, token: r.access_token }
+        },
+      },
+    });
+
+    const result = await service.acceptInvitation('invite-token-123', 'password');
+
+    expect(result.user).toEqual(mockUser);
+    expect(result.token).toBe('invite-token');
+    expect(service.getState().isAuthenticated).toBe(true);
+  });
+
+  it('transformUser maps custom /me response shape', async () => {
+    const backendMe = { profile: mockUser }
+    vi.stubGlobal('fetch', mockFetch({ 'GET /me': { status: 200, body: backendMe } }));
+
+    const service = new AuthWebService(baseState, undefined, {
+      transformers: {
+        transformUser: (raw) => (raw as typeof backendMe).profile,
+      },
+    });
+
+    await service.refreshUser();
+
+    expect(service.getState().user).toEqual(mockUser);
+    expect(service.getState().isAuthenticated).toBe(true);
+  });
+
+  it('extended user fields are preserved in state via transformUser', async () => {
+    interface ExtendedUser extends PublicUser { avatarUrl: string }
+    const extendedUser: ExtendedUser = { ...mockUser, avatarUrl: 'https://cdn.example.com/avatar.png' };
+
+    vi.stubGlobal('fetch', mockFetch({ 'GET /me': { status: 200, body: { data: extendedUser } } }));
+
+    const service = new AuthWebService<ExtendedUser>(baseState, undefined, {
+      transformers: {
+        transformUser: (raw) => (raw as { data: ExtendedUser }).data,
+      },
+    });
+
+    await service.refreshUser();
+
+    expect((service.getState().user as ExtendedUser)?.avatarUrl).toBe('https://cdn.example.com/avatar.png');
+  });
+
+  it('transformError maps custom error body to message on signIn failure', async () => {
+    vi.stubGlobal('fetch', mockFetch({ 'POST /login': { status: 401, body: { message: 'Wrong credentials' } } }));
+
+    const service = new AuthWebService(baseState, undefined, {
+      transformers: {
+        transformError: (body) => (body as { message: string }).message,
+      },
+    });
+
+    await expect(service.signIn({ email: 'test@example.com', password: 'wrong' }))
+      .rejects.toThrow('Wrong credentials');
+    expect(service.getState().error).toBe('Wrong credentials');
+  });
+
+  it('uses custom httpClient instead of fetch', async () => {
+    const customGet = vi.fn().mockResolvedValue(mockUser);
+    const customPost = vi.fn().mockResolvedValue({ user: mockUser, token: 'custom-client-token' });
+
+    const service = new AuthWebService(baseState, undefined, {
+      httpClient: { get: customGet, post: customPost },
+    });
+
+    await service.refreshUser();
+    expect(customGet).toHaveBeenCalledWith('/me');
+    expect(service.getState().user).toEqual(mockUser);
+
+    await service.signIn({ email: 'a@b.com', password: 'pass' });
+    expect(customPost).toHaveBeenCalledWith('/login', { email: 'a@b.com', password: 'pass' });
+    expect(service.getState().token).toBe('custom-client-token');
+  });
+
+  it('custom httpClient with transformAuthResponse work together', async () => {
+    const customPost = vi.fn().mockResolvedValue({ data: { user: mockUser }, jwt: 'jwt-abc' });
+
+    const service = new AuthWebService(baseState, undefined, {
+      httpClient: { get: vi.fn(), post: customPost },
+      transformers: {
+        transformAuthResponse: (raw) => {
+          const r = raw as { data: { user: typeof mockUser }; jwt: string }
+          return { user: r.data.user, token: r.jwt }
+        },
+      },
+    });
+
+    const result = await service.signIn({ email: 'a@b.com', password: 'pass' });
+
+    expect(result.user).toEqual(mockUser);
+    expect(result.token).toBe('jwt-abc');
+    expect(service.getState().isAuthenticated).toBe(true);
   });
 });

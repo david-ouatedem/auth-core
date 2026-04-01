@@ -9,6 +9,8 @@ export interface AuthClientConfig {
   baseUrl: string
   mode: 'api' | 'cookie'
   getToken: () => string | null
+  /** Override how error responses are converted to a message. Receives the raw parsed body and HTTP status. */
+  transformError?: (body: unknown, status: number) => string
 }
 
 export interface AuthApiError {
@@ -28,7 +30,7 @@ export class AuthRequestError extends Error {
 }
 
 export function createFetchAuthClient(config: AuthClientConfig): HttpClient {
-  const { baseUrl, mode, getToken } = config
+  const { baseUrl, mode, getToken, transformError } = config
 
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${baseUrl}${path}`
@@ -52,13 +54,17 @@ export function createFetchAuthClient(config: AuthClientConfig): HttpClient {
     })
 
     if (!res.ok) {
-      let body: AuthApiError
+      let body: unknown
       try {
-        body = await res.json() as AuthApiError
+        body = await res.json()
       } catch {
         throw new AuthRequestError('Request failed', undefined, res.status)
       }
-      throw new AuthRequestError(body.error, body.code, res.status)
+      if (transformError) {
+        throw new AuthRequestError(transformError(body, res.status), undefined, res.status)
+      }
+      const apiError = body as AuthApiError
+      throw new AuthRequestError(apiError.error, apiError.code, res.status)
     }
 
     return res.json() as Promise<T>

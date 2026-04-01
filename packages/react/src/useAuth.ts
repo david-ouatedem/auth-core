@@ -1,11 +1,24 @@
 import { useContext } from 'react'
 import { AuthContext } from './AuthProvider.js'
 import type { AuthContextValue } from './AuthProvider.js'
+import type { PublicUser } from '@authcore/types'
 
 /**
  * Access the AuthCore authentication context.
  *
  * Must be called inside an `<AuthProvider>`.
+ *
+ * Pass a type parameter to access fields you added via `transformUser` on `<AuthProvider>`:
+ *
+ * ```tsx
+ * interface MyUser extends PublicUser {
+ *   avatarUrl: string
+ *   displayName: string
+ * }
+ *
+ * const { user } = useAuth<MyUser>()
+ * // user.avatarUrl and user.displayName are fully typed
+ * ```
  *
  * @example
  * ```tsx
@@ -22,10 +35,10 @@ import type { AuthContextValue } from './AuthProvider.js'
  * }
  * ```
  */
-export function useAuth(): AuthContextValue {
+export function useAuth<TUser extends PublicUser = PublicUser>(): AuthContextValue<TUser> {
   const context = useContext(AuthContext)
   if (!context) {
     throw new Error('useAuth must be used within an <AuthProvider>')
   }
-  return context
+  return context as AuthContextValue<TUser>
 }

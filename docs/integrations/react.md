@@ -37,18 +37,41 @@ function MyComponent() {
     user,              // PublicUser | null
     isAuthenticated,   // boolean
     isLoading,         // boolean
-    signUp,            // (email, password) => Promise<PublicUser>
-    signIn,            // (email, password) => Promise<PublicUser>
+    error,             // string | null
+    signUp,            // (email, password) => Promise<AuthResponse>
+    signIn,            // (email, password) => Promise<AuthResponse>
     signOut,           // () => Promise<void>
     forgotPassword,    // (email) => Promise<void>
     resetPassword,     // (token, password) => Promise<void>
     verifyEmail,       // (token) => Promise<void>
+    invite,            // (email, role?) => Promise<void>
+    acceptInvitation,  // (token, password) => Promise<AuthResponse>
     refreshUser,       // () => Promise<void>
   } = useAuth()
 
   // ...
 }
 ```
+
+### Extended user type
+
+If your backend returns extra fields on the user object (e.g. `avatarUrl`, `displayName`), pass a type parameter to `useAuth` to get them fully typed:
+
+```tsx
+import type { PublicUser } from '@authcore/types'
+
+interface MyUser extends PublicUser {
+  avatarUrl: string
+  displayName: string
+}
+
+function Profile() {
+  const { user } = useAuth<MyUser>()
+  // user.avatarUrl and user.displayName are typed
+}
+```
+
+Pair this with [`transformUser`](#custom-backend-integration) on `<AuthProvider>` to map your backend's response to `MyUser`.
 
 ## `ProtectedRoute`
 
@@ -85,7 +108,120 @@ function App() {
 | `mode` | `'api' \| 'cookie'` | `'api'` | Authentication mode |
 | `persistSession` | `boolean` | `true` | Store token in localStorage (api mode) |
 | `storageKey` | `string` | `'authcore_token'` | localStorage key (api mode) |
-| `routes` | `object` | defaults | Custom route paths |
+| `routes` | `object` | see below | Custom route paths |
+| `transformAuthResponse` | `(raw: unknown) => { user, token? }` | — | Map sign-in/sign-up response shape |
+| `transformUser` | `(raw: unknown) => TUser` | — | Map /me response shape |
+| `transformError` | `(body: unknown, status: number) => string` | — | Map error response to message string |
+| `httpClient` | `{ get, post }` | — | Replace the built-in fetch client entirely |
+
+### Custom route paths
+
+```tsx
+<AuthProvider
+  baseUrl="/api"
+  routes={{
+    login: '/auth/sign-in',
+    register: '/auth/sign-up',
+    logout: '/auth/sign-out',
+    me: '/auth/me',
+    verifyEmail: '/auth/verify',
+    forgotPassword: '/auth/forgot',
+    resetPassword: '/auth/reset',
+    invite: '/auth/invite',
+    acceptInvitation: '/auth/accept',
+  }}
+>
+```
+
+## Custom Backend Integration
+
+`@authcore/react` works with **any backend** — it does not require `@authcore/express` or any other AuthCore server package. Use the response transformer props to adapt your backend's JSON shape.
+
+### Different response shapes
+
+```tsx
+// Your backend returns: { data: { user: {...} }, access_token: "..." }
+<AuthProvider
+  baseUrl="https://api.example.com"
+  transformAuthResponse={(raw) => {
+    const res = raw as { data: { user: MyUser }; access_token: string }
+    return { user: res.data.user, token: res.access_token }
+  }}
+  transformUser={(raw) => {
+    const res = raw as { data: MyUser }
+    return res.data
+  }}
+/>
+```
+
+### Different error shapes
+
+```tsx
+// Your backend returns: { message: "Not found", statusCode: 404 }
+<AuthProvider
+  baseUrl="https://api.example.com"
+  transformError={(body, status) => {
+    const err = body as { message?: string }
+    return err.message ?? `Request failed with status ${status}`
+  }}
+/>
+```
+
+### Custom HTTP client (Axios, etc.)
+
+For full control — custom interceptors, retries, auth headers — supply your own HTTP client:
+
+```tsx
+import axios from 'axios'
+
+const axiosClient = {
+  get: <T>(path: string) =>
+    axios.get<T>(`https://api.example.com${path}`).then(r => r.data),
+  post: <T>(path: string, body?: unknown) =>
+    axios.post<T>(`https://api.example.com${path}`, body).then(r => r.data),
+}
+
+<AuthProvider httpClient={axiosClient}>
+  <App />
+</AuthProvider>
+```
+
+When `httpClient` is provided, `baseUrl`, `mode`, and `storageKey` are ignored for request handling.
+
+### Full custom backend example
+
+```tsx
+import type { PublicUser } from '@authcore/types'
+
+interface MyUser extends PublicUser {
+  avatarUrl: string
+  plan: 'free' | 'pro'
+}
+
+function App() {
+  return (
+    <AuthProvider<MyUser>
+      baseUrl="https://api.myapp.com"
+      mode="cookie"
+      routes={{ login: '/session', me: '/session/me', logout: '/session' }}
+      transformAuthResponse={(raw) => {
+        const r = raw as { user: MyUser; jwt: string }
+        return { user: r.user, token: r.jwt }
+      }}
+      transformUser={(raw) => (raw as { user: MyUser }).user}
+      transformError={(body) => (body as { message: string }).message}
+    >
+      <MyApp />
+    </AuthProvider>
+  )
+}
+
+// Fully typed access to extended fields anywhere in the tree
+function Header() {
+  const { user } = useAuth<MyUser>()
+  return <img src={user?.avatarUrl} />
+}
+```
 
 ## Error Handling
 
@@ -98,9 +234,11 @@ try {
   await signIn(email, password)
 } catch (err) {
   if (err instanceof AuthRequestError) {
-    console.log(err.message) // 'Invalid email or password'
-    console.log(err.code)    // 'INVALID_CREDENTIALS'
-    console.log(err.status)  // 401
+    console.log(err.message)    // 'Invalid email or password'
+    console.log(err.code)       // 'INVALID_CREDENTIALS' (if backend sends one)
+    console.log(err.statusCode) // 401
   }
 }
 ```
+
+Use `transformError` if your backend's error shape doesn't match `{ error: string, code?: string }`.

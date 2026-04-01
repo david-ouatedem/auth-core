@@ -5,6 +5,15 @@ import type { HttpClient } from './types/HttpClients.interface.js'
 import { createFetchAuthClient } from './http-client/createFetchAuthClient.js'
 import type { PublicUser } from '@authcore/types'
 
+export interface AuthResponseTransformers<TUser extends PublicUser = PublicUser> {
+  /** Map your backend's sign-in / sign-up / accept-invitation response to { user, token? } */
+  transformAuthResponse?: (raw: unknown) => { user: TUser; token?: string }
+  /** Map your backend's /me response to a user object */
+  transformUser?: (raw: unknown) => TUser
+  /** Map your backend's error body to an error message string */
+  transformError?: (body: unknown, status: number) => string
+}
+
 /** All route paths with defaults applied. */
 interface ResolvedRoutes {
   register: string
@@ -18,14 +27,21 @@ interface ResolvedRoutes {
   acceptInvitation: string
 }
 
-export class AuthWebService implements AuthWebServiceResponseInterface {
-  private state: AuthWebStateInterface
+export class AuthWebService<TUser extends PublicUser = PublicUser>
+  implements AuthWebServiceResponseInterface<TUser> {
+  private state: AuthWebStateInterface<TUser>
   private paths: ResolvedRoutes
   private client: HttpClient
   private listeners: Set<() => void>
+  private transformers: AuthResponseTransformers<TUser>
 
-  constructor(initialState: AuthWebStateInterface, routes?: AuthWebRoutesInterface) {
+  constructor(
+    initialState: AuthWebStateInterface<TUser>,
+    routes?: AuthWebRoutesInterface,
+    options?: { transformers?: AuthResponseTransformers<TUser>; httpClient?: HttpClient },
+  ) {
     this.state = initialState
+    this.transformers = options?.transformers ?? {}
 
     if (typeof window !== 'undefined' && this.state.mode === 'api' && this.state.persistSession) {
       const stored = localStorage.getItem(this.state.storageKey ?? 'authcore_token')
@@ -34,10 +50,11 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
       }
     }
 
-    this.client = createFetchAuthClient({
+    this.client = options?.httpClient ?? createFetchAuthClient({
       baseUrl: initialState.baseUrl,
       mode: initialState.mode,
       getToken: () => this.state.token ?? null,
+      ...(this.transformers.transformError ? { transformError: this.transformers.transformError } : {}),
     })
 
     this.paths = {
@@ -55,12 +72,15 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
     this.listeners = new Set()
   }
 
-  async signIn({ email, password }: { email: string; password: string }): Promise<AuthResponse> {
+  async signIn({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {
     try {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
-      const response = await this.client.post<AuthResponse>(this.paths.login, { email, password })
+      const raw = await this.client.post<unknown>(this.paths.login, { email, password })
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : raw as AuthResponse<TUser>
       this.state = {
         ...this.state,
         user: response.user,
@@ -80,12 +100,15 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
     }
   }
 
-  async signUp({ email, password }: { email: string; password: string }): Promise<AuthResponse> {
+  async signUp({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {
     try {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
-      const response = await this.client.post<AuthResponse>(this.paths.register, { email, password })
+      const raw = await this.client.post<unknown>(this.paths.register, { email, password })
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : raw as AuthResponse<TUser>
       this.state = {
         ...this.state,
         user: response.user,
@@ -184,15 +207,18 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
     }
   }
 
-  async acceptInvitation(token: string, password: string): Promise<AuthResponse> {
+  async acceptInvitation(token: string, password: string): Promise<AuthResponse<TUser>> {
     try {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
-      const response = await this.client.post<AuthResponse>(
+      const raw = await this.client.post<unknown>(
         this.paths.acceptInvitation,
         { token, password },
       )
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : raw as AuthResponse<TUser>
       this.state = {
         ...this.state,
         user: response.user,
@@ -217,7 +243,10 @@ export class AuthWebService implements AuthWebServiceResponseInterface {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
-      const user = await this.client.get<PublicUser>(this.paths.me)
+      const raw = await this.client.get<unknown>(this.paths.me)
+      const user = this.transformers.transformUser
+        ? this.transformers.transformUser(raw)
+        : raw as TUser
       this.state = { ...this.state, user, isLoading: false, isAuthenticated: true }
       this.notifyListeners()
     } catch (error) {

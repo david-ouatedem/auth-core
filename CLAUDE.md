@@ -77,6 +77,12 @@ cp .env.example .env
 # Edit .env with real DATABASE_URL and AUTH_SECRET
 ```
 
+## Testing Rules (Always Follow These)
+
+- **Every code change must be accompanied by tests.** New features get new tests; bug fixes get a regression test; refactors must keep existing tests green.
+- Add tests to the existing test file for the package being changed. Do not create standalone test files unless a test file doesn't exist yet.
+- Run the affected package's tests after writing them (`pnpm --filter <package> test --run`) and confirm all pass before considering the task done.
+
 ## Security Rules (Never Break These)
 
 1. Passwords hashed with bcrypt ≥12 rounds, never stored or logged plain
