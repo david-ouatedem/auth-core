@@ -3,6 +3,34 @@ import { useState } from 'react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
+// ---------------------------------------------------------------------------
+// If your backend is AuthCore-compatible, the default setup below works as-is.
+//
+// If your backend returns a different JSON shape, uncomment and adapt this:
+//
+// interface MyUser extends PublicUser {
+//   displayName: string
+//   avatarUrl: string
+// }
+//
+// const providerProps = {
+//   baseUrl: API_URL,
+//   routes: {
+//     login: '/auth/sign-in',
+//     register: '/auth/sign-up',
+//     logout: '/auth/sign-out',
+//     me: '/auth/me',
+//   },
+//   transformAuthResponse: (raw: unknown) => {
+//     const r = raw as { data: { user: MyUser }; access_token: string }
+//     return { user: r.data.user, token: r.access_token }
+//   },
+//   transformUser: (raw: unknown) => (raw as { data: MyUser }).data,
+//   transformError: (body: unknown) =>
+//     (body as { message?: string }).message ?? 'Request failed',
+// }
+// ---------------------------------------------------------------------------
+
 function Login() {
   const { signIn } = useAuth()
   const [email, setEmail] = useState('')
@@ -92,6 +120,8 @@ function AppContent() {
 
 export default function App() {
   return (
+    // Default: AuthCore-compatible backend (Express or Fastify adapter)
+    // To connect to a custom backend, see the commented providerProps above.
     <AuthProvider baseUrl={`${API_URL}/auth`} mode="api">
       <h1>AuthCore — Frontend-Only Example</h1>
       <p style={{ color: '#666' }}>
