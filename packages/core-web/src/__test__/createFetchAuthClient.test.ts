@@ -153,4 +153,55 @@ describe('createFetchAuthClient', () => {
       expect(err.statusCode).toBe(500);
     }
   });
+
+  it('uses transformError to extract message from a custom error shape', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ message: 'Email already taken', statusCode: 422 })
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      getToken: () => null,
+      transformError: (body, status) => {
+        const b = body as { message?: string }
+        return b.message ?? `Error ${status}`
+      }
+    });
+
+    try {
+      await client.post('/register', {});
+      expect.fail('Expected error to be thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AuthRequestError);
+      expect(err.message).toBe('Email already taken');
+      expect(err.statusCode).toBe(422);
+    }
+  });
+
+  it('transformError fallback when message field is missing', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({})
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      getToken: () => null,
+      transformError: (_, status) => `Error ${status}`
+    });
+
+    try {
+      await client.get('/test');
+      expect.fail('Expected error to be thrown');
+    } catch (err: any) {
+      expect(err.message).toBe('Error 503');
+    }
+  });
 });
