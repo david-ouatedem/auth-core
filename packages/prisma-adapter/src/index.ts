@@ -121,7 +121,7 @@ interface PrismaClientLike {
       expiresAt: Date
       createdAt: Date
     } | null>
-    delete(args: { where: { id: string } }): Promise<void>
+    delete(args: { where: { id: string } }): Promise<unknown>
     deleteMany(args: { where: { expiresAt: { lt: Date } } }): Promise<{ count: number }>
   }
 }

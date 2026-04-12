@@ -5,8 +5,23 @@
 ## Install
 
 ```bash
+# Core packages
 npm install @authcore/nestjs @authcore/prisma-adapter
+
+# Prisma client (required)
+npm install @prisma/client
+
+# Prisma CLI (required for migrations/codegen — dev dependency)
+npm install --save-dev prisma
+
+# Prisma 6 only: driver adapter for your database (PostgreSQL example)
+npm install @prisma/adapter-pg pg
+npm install --save-dev @types/pg
 ```
+
+> If you are on Prisma 5 you do not need `@prisma/adapter-pg`. See the
+> [`@authcore/prisma-adapter` README](https://www.npmjs.com/package/@authcore/prisma-adapter)
+> for schema setup and Prisma version details.
 
 Peer dependencies (already installed in any NestJS project):
 - `@nestjs/common` (^10.0.0 or ^11.0.0)
@@ -24,7 +39,13 @@ import { AuthModule } from '@authcore/nestjs'
 import { prismaAdapter } from '@authcore/prisma-adapter'
 import { PrismaClient } from '@prisma/client'
 
+// Prisma 5 (default prisma-client-js generator):
 const prisma = new PrismaClient()
+
+// Prisma 6 (new prisma-client generator — requires a driver adapter):
+// import { PrismaPg } from '@prisma/adapter-pg'
+// const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
+// const prisma = new PrismaClient({ adapter })
 
 @Module({
   imports: [
