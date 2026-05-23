@@ -117,6 +117,32 @@ In **cookie mode**, `handleOAuthCallback()` just calls `/me` — the browser alr
 
 In **api mode**, set `oauthSuccessRedirect` on the server to a frontend URL. The server redirects with `#token=…&refreshToken=…` in the fragment, and `handleOAuthCallback()` reads it, persists the token, and clears the fragment.
 
+## Bundled providers
+
+### Google
+
+Already documented above. Requires `clientId` + `clientSecret` from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Authorized redirect URI: `${baseUrl}/auth/oauth/google/callback`.
+
+### GitHub
+
+```ts
+import { createGithubProvider } from '@authcore/core'
+
+const github = createGithubProvider({
+  clientId: process.env.GITHUB_CLIENT_ID!,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+  // scopes: ['read:user', 'user:email'],   // optional override
+  // enterpriseBaseUrl: 'https://ghe.acme.com',  // optional GHE
+})
+```
+
+**Configuration:** Register an OAuth App at <https://github.com/settings/developers>. The **Authorization callback URL** must be exactly `${baseUrl}/auth/oauth/github/callback`.
+
+**Notes:**
+- AuthCore fetches `/user/emails` and returns the user's **verified primary** email. If the account has no verified email, login is refused with a clear error.
+- The default scopes (`read:user`, `user:email`) are the minimum needed. Add `repo` etc. if your app needs additional permissions.
+- For GitHub Enterprise Server, pass `enterpriseBaseUrl` and AuthCore points all endpoints at your instance.
+
 ## Adding a new provider
 
 Implement the `OAuthProvider` interface:

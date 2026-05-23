@@ -48,6 +48,8 @@ export {
 export { startOAuth, completeOAuth } from './features/oauth.js'
 export { createGoogleProvider } from './oauth/google.js'
 export type { GoogleProviderConfig } from './oauth/google.js'
+export { createGithubProvider } from './oauth/github.js'
+export type { GithubProviderConfig } from './oauth/github.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'
