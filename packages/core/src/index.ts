@@ -50,6 +50,8 @@ export { createGoogleProvider } from './oauth/google.js'
 export type { GoogleProviderConfig } from './oauth/google.js'
 export { createGithubProvider } from './oauth/github.js'
 export type { GithubProviderConfig } from './oauth/github.js'
+export { createMicrosoftProvider } from './oauth/microsoft.js'
+export type { MicrosoftProviderConfig } from './oauth/microsoft.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'

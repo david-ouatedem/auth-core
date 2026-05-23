@@ -123,6 +123,32 @@ In **api mode**, set `oauthSuccessRedirect` on the server to a frontend URL. The
 
 Already documented above. Requires `clientId` + `clientSecret` from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Authorized redirect URI: `${baseUrl}/auth/oauth/google/callback`.
 
+### Microsoft (Entra ID)
+
+```ts
+import { createMicrosoftProvider } from '@authcore/core'
+
+const microsoft = createMicrosoftProvider({
+  clientId: process.env.MICROSOFT_CLIENT_ID!,
+  clientSecret: process.env.MICROSOFT_CLIENT_SECRET!,
+  // tenant: 'common',  // 'common' | 'organizations' | 'consumers' | <tenant-id>
+  // scopes: ['openid', 'profile', 'email', 'offline_access'],  // add offline_access for refresh tokens
+})
+```
+
+**Configuration:** Register an app at the [Azure Portal → App registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade). The **Redirect URI** must be exactly `${baseUrl}/auth/oauth/microsoft/callback` (type: Web).
+
+**Tenant strategies:**
+- `'common'` — personal Microsoft accounts AND work/school accounts in any Entra tenant. Best default.
+- `'organizations'` — work/school accounts only (B2B).
+- `'consumers'` — personal accounts only.
+- `'<your-tenant-id>'` — single-tenant: restrict to one specific Entra tenant.
+
+**Notes:**
+- AuthCore reads identity claims (sub/email/name) from the OpenID Connect `id_token` returned in the token exchange — no extra Microsoft Graph call when the id_token is present.
+- Microsoft doesn't expose an `email_verified` claim, so emails are treated as verified (Microsoft verifies before issuing accounts).
+- Falls back to Microsoft Graph `/me` if the id_token is missing the email claim.
+
 ### GitHub
 
 ```ts
