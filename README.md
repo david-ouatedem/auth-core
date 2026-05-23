@@ -14,6 +14,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/types`](packages/types) | Shared type definitions for adapters, config, and domain models |
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic and adapter interfaces |
 | [`@authcore/core-web`](packages/core-web) | Framework-agnostic web auth service (HTTP client, session persistence) |
+| [`@authcore/nextjs`](packages/nextjs) | Next.js App Router adapter (handler + server helpers + middleware) |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
 | [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |

@@ -1,0 +1,71 @@
+{
+  "name": "@authcore/nextjs",
+  "version": "0.11.0",
+  "description": "Next.js (App Router) adapter for AuthCore",
+  "license": "MIT",
+  "author": "David Ouatedem",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-ouatedem/auth-core",
+    "directory": "packages/nextjs"
+  },
+  "keywords": [
+    "auth",
+    "authcore",
+    "nextjs",
+    "next",
+    "app-router"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
+    },
+    "./middleware": {
+      "import": "./dist/middleware.js",
+      "types": "./dist/middleware.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@authcore/core": "workspace:^",
+    "@authcore/core-web": "workspace:^",
+    "@authcore/react": "workspace:^",
+    "@authcore/types": "workspace:^"
+  },
+  "peerDependencies": {
+    "next": "^13.4.0 || ^14.0.0 || ^15.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
