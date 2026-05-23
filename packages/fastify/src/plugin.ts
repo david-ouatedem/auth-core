@@ -23,6 +23,10 @@ export interface PluginConfig {
     oauth?: string
     /** OAuth callback route. Default: '/oauth/:provider/callback'. Must include ':provider' placeholder. */
     oauthCallback?: string
+    /** Magic-link send route (POST). Default: '/magic-link'. */
+    sendMagicLink?: string
+    /** Magic-link consume route (GET). Default: '/magic-link/consume'. */
+    consumeMagicLink?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
@@ -33,6 +37,12 @@ export interface PluginConfig {
    * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
    */
   oauthSuccessRedirect?: string
+  /**
+   * Where to redirect the user after a successful magic-link consume in
+   * cookie mode. Default: '/'. In api mode + this set, the server redirects
+   * to that URL with `#token=…&refreshToken=…`.
+   */
+  magicLinkSuccessRedirect?: string
 }
 
 function handleError(reply: FastifyReply, err: unknown): FastifyReply {
@@ -73,8 +83,11 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     revoke: routePaths.revoke ?? '/revoke',
     oauth: routePaths.oauth ?? '/oauth/:provider',
     oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
+    sendMagicLink: routePaths.sendMagicLink ?? '/magic-link',
+    consumeMagicLink: routePaths.consumeMagicLink ?? '/magic-link/consume',
   }
   const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
+  const magicLinkSuccessRedirect = config.magicLinkSuccessRedirect ?? '/'
 
   const isProduction = process.env['NODE_ENV'] === 'production'
   const authRequired = createAuthRequired(auth, cookieName)
@@ -244,6 +257,38 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
           return reply.send({ user })
         }
         return reply.send({ user, token, refreshToken })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /magic-link — always 200 (enumeration-safe)
+    fastify.post(paths.sendMagicLink, async (request, reply) => {
+      try {
+        const magicLinkUrl = `${baseUrl}${paths.consumeMagicLink}`
+        await auth.sendMagicLink(request.body, { magicLinkUrl })
+      } catch (err) {
+        if (err instanceof AuthError && err.code !== 'INVALID_TOKEN') {
+          return handleError(reply, err)
+        }
+      }
+      return reply.send({ message: 'If that email exists, a sign-in link has been sent.' })
+    })
+
+    // GET /magic-link/consume?token=…
+    fastify.get(paths.consumeMagicLink, async (request, reply) => {
+      try {
+        const q = request.query as { token?: string }
+        const { user, token: jwt, refreshToken } = await auth.consumeMagicLink({ token: q.token ?? '' })
+        if (useCookies) {
+          setAuthCookies(reply, jwt, refreshToken)
+          return reply.redirect(magicLinkSuccessRedirect)
+        }
+        if (config.magicLinkSuccessRedirect) {
+          const params = new URLSearchParams({ token: jwt, refreshToken })
+          return reply.redirect(`${magicLinkSuccessRedirect}#${params.toString()}`)
+        }
+        return reply.send({ user, token: jwt, refreshToken })
       } catch (err) {
         return handleError(reply, err)
       }

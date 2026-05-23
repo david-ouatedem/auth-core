@@ -42,7 +42,8 @@ export default defineConfig({
         items: [
           { text: 'Refresh Tokens', link: '/security/refresh-tokens' },
           { text: 'CSRF', link: '/security/csrf' },
-          { text: 'OAuth (Google)', link: '/security/oauth' },
+          { text: 'OAuth', link: '/security/oauth' },
+          { text: 'Magic-Link Login', link: '/security/magic-link' },
           { text: 'Email Templates', link: '/security/email-templates' },
         ],
       },

@@ -1004,3 +1004,124 @@ describeIf('@authcore/express OAuth (0.11)', () => {
     expect(cbRes.body.code).toBe('OAUTH_EXCHANGE_FAILED')
   })
 })
+
+// ---- 0.12: Magic-link ----
+
+describeIf('@authcore/express magic-link (0.12)', () => {
+  it('POST /auth/magic-link sends an email containing the consume URL + token', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    const mlApp = express()
+    mlApp.use(express.json())
+    mlApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const res = await request(mlApp).post('/auth/magic-link').send({ email: 'newmagic@example.com' })
+    expect(res.status).toBe(200)
+    expect(capture.sent).toHaveLength(1)
+    const sent = capture.last()!
+    expect(sent.html).toContain('http://localhost/auth/magic-link/consume?token=')
+
+    // A user was auto-created with emailVerified=true
+    const user = await prisma.user.findUnique({ where: { email: 'newmagic@example.com' } })
+    expect(user).not.toBeNull()
+    expect(user!.emailVerified).toBe(true)
+  })
+
+  it('always returns 200 for unknown emails (enumeration-safe) when autoCreate creates user', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    const mlApp = express()
+    mlApp.use(express.json())
+    mlApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const res = await request(mlApp).post('/auth/magic-link').send({ email: 'unknown@example.com' })
+    expect(res.status).toBe(200)
+  })
+
+  it('GET /auth/magic-link/consume?token=… returns JSON in api mode and is single-use', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    const mlApp = express()
+    mlApp.use(express.json())
+    mlApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    await request(mlApp).post('/auth/magic-link').send({ email: 'consume@example.com' })
+    const link = new URL(capture.last()!.html.match(/href="(http[^"]+)"/)![1]!)
+    const token = link.searchParams.get('token')!
+
+    const consumeRes = await request(mlApp).get('/auth/magic-link/consume').query({ token })
+    expect(consumeRes.status).toBe(200)
+    expect(consumeRes.body.user.email).toBe('consume@example.com')
+    expect(consumeRes.body.token).toBeTruthy()
+    expect(consumeRes.body.refreshToken).toBeTruthy()
+
+    // Replay: same token, second time → 400
+    const replayRes = await request(mlApp).get('/auth/magic-link/consume').query({ token })
+    expect(replayRes.status).toBe(400)
+    expect(replayRes.body.code).toBe('INVALID_TOKEN')
+  })
+
+  it('cookie mode: consume sets 3 cookies and redirects to magicLinkSuccessRedirect', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    const mlApp = express()
+    mlApp.use(express.json())
+    mlApp.use((req, _res, next) => {
+      req.cookies = parseCookies(req.headers.cookie)
+      next()
+    })
+    mlApp.use('/auth', auth.router({
+      baseUrl: 'http://localhost',
+      useCookies: true,
+      magicLinkSuccessRedirect: '/dashboard',
+    }))
+
+    await request(mlApp).post('/auth/magic-link').send({ email: 'cookie-ml@example.com' })
+    const link = new URL(capture.last()!.html.match(/href="(http[^"]+)"/)![1]!)
+    const token = link.searchParams.get('token')!
+
+    const consumeRes = await request(mlApp).get('/auth/magic-link/consume').query({ token })
+    expect(consumeRes.status).toBe(302)
+    expect(consumeRes.headers['location']).toBe('/dashboard')
+    const setCookie = consumeRes.headers['set-cookie']!
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token='))).toBe(true)
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token_refresh='))).toBe(true)
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token_csrf='))).toBe(true)
+  })
+
+  it('POST /auth/magic-link returns 500 FEATURE_DISABLED when feature is off', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    const mlApp = express()
+    mlApp.use(express.json())
+    mlApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const res = await request(mlApp).post('/auth/magic-link').send({ email: 'x@y.com' })
+    expect(res.status).toBe(500)
+    expect(res.body.code).toBe('FEATURE_DISABLED')
+  })
+})

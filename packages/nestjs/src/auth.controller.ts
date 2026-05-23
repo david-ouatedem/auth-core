@@ -34,6 +34,12 @@ interface ModuleOptions {
    * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
    */
   oauthSuccessRedirect?: string
+  /**
+   * Where to redirect the user after a successful magic-link consume in
+   * cookie mode. Default: '/'. In api mode + this set, the server redirects
+   * to that URL with `#token=…&refreshToken=…`.
+   */
+  magicLinkSuccessRedirect?: string
 }
 
 function toHttpException(err: unknown): HttpException {
@@ -232,6 +238,39 @@ export class AuthController {
         return { user }
       }
       return { user, token, refreshToken }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('magic-link')
+  async sendMagicLink(@Body() body: unknown) {
+    try {
+      const baseUrl = this.options.baseUrl ?? ''
+      const magicLinkUrl = `${baseUrl}/auth/magic-link/consume`
+      await this.auth.sendMagicLink(body, { magicLinkUrl })
+    } catch (err) {
+      if (err instanceof AuthError && err.code !== 'INVALID_TOKEN') {
+        throw toHttpException(err)
+      }
+      // Swallow other errors — enumeration-safe.
+    }
+    return { message: 'If that email exists, a sign-in link has been sent.' }
+  }
+
+  @Get('magic-link/consume')
+  async consumeMagicLink(@Query('token') token: string, @Res() res: Response): Promise<void> {
+    try {
+      const { user, token: jwt, refreshToken } = await this.auth.consumeMagicLink({ token: token ?? '' })
+      if (this.useCookies) {
+        this.setAuthCookies(res, jwt, refreshToken)
+        res.redirect(this.options.magicLinkSuccessRedirect ?? '/')
+      } else if (this.options.magicLinkSuccessRedirect) {
+        const params = new URLSearchParams({ token: jwt, refreshToken })
+        res.redirect(`${this.options.magicLinkSuccessRedirect}#${params.toString()}`)
+      } else {
+        res.json({ user, token: jwt, refreshToken })
+      }
     } catch (err) {
       throw toHttpException(err)
     }

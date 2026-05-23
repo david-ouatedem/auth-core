@@ -20,7 +20,8 @@ function toCoreTokenType(type: string): TokenType {
     type === 'PASSWORD_RESET' ||
     type === 'SESSION' ||
     type === 'INVITATION' ||
-    type === 'REFRESH'
+    type === 'REFRESH' ||
+    type === 'MAGIC_LINK'
   ) {
     return type
   }

@@ -45,4 +45,25 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
    *   be configured with `oauthSuccessRedirect` for this to work), then fetches `/me`.
    */
   handleOAuthCallback(): Promise<void>
+  /**
+   * Send a magic-link email to start a passwordless sign-in. Always resolves
+   * successfully — the server returns 200 whether the email exists or not
+   * (enumeration-safe).
+   */
+  signInWithMagicLink(email: string): Promise<void>
+  /**
+   * Call this on your magic-link landing page (the URL embedded in the email,
+   * or the page the server redirects to after consuming the link).
+   *
+   * Reads `?token=…` from the URL — when present, the server has not yet been
+   * called (the user just clicked the email link); this method calls the
+   * consume endpoint and populates auth state.
+   *
+   * When the URL has no `?token=…` but has a `#token=…&refreshToken=…`
+   * fragment (api mode + `magicLinkSuccessRedirect`), reads the tokens from
+   * the fragment, populates state, and clears the fragment.
+   *
+   * In cookie mode after a server-side redirect, calls `/me`.
+   */
+  handleMagicLinkCallback(): Promise<void>
 }

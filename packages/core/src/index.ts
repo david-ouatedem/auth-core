@@ -19,6 +19,8 @@ export {
   verifyEmailSchema,
   inviteSchema,
   acceptInvitationSchema,
+  sendMagicLinkSchema,
+  consumeMagicLinkSchema,
 } from './utils/validation.js'
 export type {
   RegisterInput,
@@ -28,6 +30,8 @@ export type {
   VerifyEmailInput,
   InviteInput,
   AcceptInvitationInput,
+  SendMagicLinkInput,
+  ConsumeMagicLinkInput,
 } from './utils/validation.js'
 
 // Features
@@ -44,7 +48,13 @@ export {
   defaultVerifyEmailTemplate,
   defaultResetPasswordTemplate,
   defaultInvitationTemplate,
+  defaultMagicLinkTemplate,
 } from './features/templates.js'
+export {
+  sendMagicLink,
+  consumeMagicLink,
+  MAGIC_LINK_NO_PASSWORD_SENTINEL,
+} from './features/magicLink.js'
 export { startOAuth, completeOAuth } from './features/oauth.js'
 export { createGoogleProvider } from './oauth/google.js'
 export type { GoogleProviderConfig } from './oauth/google.js'

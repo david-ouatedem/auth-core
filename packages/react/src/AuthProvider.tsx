@@ -30,6 +30,17 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
    * In cookie mode fetches `/me`. In api mode reads the token from the URL fragment.
    */
   handleOAuthCallback(): Promise<void>
+  /**
+   * Start a passwordless sign-in by sending a magic-link email. Resolves
+   * successfully whether the email exists or not (enumeration-safe).
+   */
+  signInWithMagicLink(email: string): Promise<void>
+  /**
+   * Handle the magic-link landing page. Exchanges `?token=…` for a session
+   * via the server (when present), or reads `#token=…&refreshToken=…` from
+   * the fragment (api-mode redirect), then populates auth state.
+   */
+  handleMagicLinkCallback(): Promise<void>
 }
 
 // Context is typed with the base PublicUser. useAuth<TUser>() narrows via a type assertion,
@@ -135,6 +146,8 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
     oauthStartUrl: (providerId) => service.oauthStartUrl(providerId),
     signInWithProvider: (providerId) => service.signInWithProvider(providerId),
     handleOAuthCallback: () => service.handleOAuthCallback(),
+    signInWithMagicLink: (email) => service.signInWithMagicLink(email),
+    handleMagicLinkCallback: () => service.handleMagicLinkCallback(),
   }
 
   return (

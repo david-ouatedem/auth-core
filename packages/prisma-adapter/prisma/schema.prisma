@@ -60,4 +60,5 @@ enum TokenType {
   SESSION
   INVITATION
   REFRESH
+  MAGIC_LINK
 }

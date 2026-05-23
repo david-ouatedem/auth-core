@@ -23,6 +23,10 @@ export interface RouterConfig {
     oauth?: string
     /** OAuth callback route. Default: '/oauth/:provider/callback'. Must include ':provider' placeholder. */
     oauthCallback?: string
+    /** Magic-link send route (POST). Default: '/magic-link'. */
+    sendMagicLink?: string
+    /** Magic-link consume route (GET). Default: '/magic-link/consume'. */
+    consumeMagicLink?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
@@ -33,6 +37,12 @@ export interface RouterConfig {
    * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
    */
   oauthSuccessRedirect?: string
+  /**
+   * Where to redirect the user after a successful magic-link consume in
+   * cookie mode. Default: '/'. In api mode + `magicLinkSuccessRedirect` set,
+   * the server redirects to that URL with `#token=…&refreshToken=…`.
+   */
+  magicLinkSuccessRedirect?: string
 }
 
 function handleError(res: Response, err: unknown): void {
@@ -78,8 +88,11 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     revoke: routePaths.revoke ?? '/revoke',
     oauth: routePaths.oauth ?? '/oauth/:provider',
     oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
+    sendMagicLink: routePaths.sendMagicLink ?? '/magic-link',
+    consumeMagicLink: routePaths.consumeMagicLink ?? '/magic-link/consume',
   }
   const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
+  const magicLinkSuccessRedirect = config.magicLinkSuccessRedirect ?? '/'
 
   function setAuthCookies(res: Response, token: string, refreshToken: string): void {
     res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' })
@@ -262,6 +275,41 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
         res.json({ user })
       } else {
         res.json({ user, token, refreshToken })
+      }
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /magic-link — send a magic-link email. Always 200 (enumeration-safe).
+  router.post(paths.sendMagicLink, async (req, res) => {
+    try {
+      const magicLinkUrl = `${baseUrl}${paths.consumeMagicLink}`
+      await auth.sendMagicLink(req.body, { magicLinkUrl })
+    } catch (err) {
+      // FEATURE_DISABLED / EMAIL_NOT_CONFIGURED / MISSING_URL are config errors,
+      // not enumeration leaks — surface them. Anything else is silenced below
+      // by sendMagicLinkFeature's swallow.
+      if (err instanceof AuthError && err.code !== 'INVALID_TOKEN') {
+        return handleError(res, err)
+      }
+    }
+    res.json({ message: 'If that email exists, a sign-in link has been sent.' })
+  })
+
+  // GET /magic-link/consume?token=… — complete sign-in from the email link.
+  router.get(paths.consumeMagicLink, async (req, res) => {
+    try {
+      const token = typeof req.query['token'] === 'string' ? req.query['token'] : ''
+      const { user, token: jwt, refreshToken } = await auth.consumeMagicLink({ token })
+      if (useCookies) {
+        setAuthCookies(res, jwt, refreshToken)
+        res.redirect(magicLinkSuccessRedirect)
+      } else if (config.magicLinkSuccessRedirect) {
+        const params = new URLSearchParams({ token: jwt, refreshToken })
+        res.redirect(`${magicLinkSuccessRedirect}#${params.toString()}`)
+      } else {
+        res.json({ user, token: jwt, refreshToken })
       }
     } catch (err) {
       handleError(res, err)

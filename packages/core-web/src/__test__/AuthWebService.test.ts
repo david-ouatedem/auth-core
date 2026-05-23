@@ -835,4 +835,148 @@ describe('AuthWebService — refresh tokens', () => {
       expect(service.oauthStartUrl('github')).toBe('http://api.example.com/v2/sso/github/start');
     });
   });
+
+  // ---- 0.12: Magic-link client helpers ----
+
+  describe('Magic-link client helpers', () => {
+    it('signInWithMagicLink POSTs the email to /magic-link', async () => {
+      const fetchMock = mockFetch({
+        'POST /magic-link': { status: 200, body: { message: 'sent' } },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new AuthWebService({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: false,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.signInWithMagicLink('alice@example.com');
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(String(url)).toBe('http://api.example.com/magic-link');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body as string)).toEqual({ email: 'alice@example.com' });
+    });
+
+    it('handleMagicLinkCallback (?token=…) calls consume endpoint and populates state', async () => {
+      vi.stubGlobal(
+        'fetch',
+        mockFetch({
+          'GET /magic-link/consume': {
+            status: 200,
+            body: { user: { ...mockUser, email: 'magic@example.com' }, token: 'jwt-x', refreshToken: 'ref-x' },
+          },
+        }),
+      );
+      const replaceState = vi.fn();
+      vi.stubGlobal('window', {
+        location: {
+          href: 'http://app.example.com/cb?token=raw-magic',
+          hash: '',
+        },
+        history: { replaceState },
+      });
+
+      const service = new AuthWebService<PublicUser>({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: true,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.handleMagicLinkCallback();
+
+      expect(service.getState().token).toBe('jwt-x');
+      expect(service.getState().refreshToken).toBe('ref-x');
+      expect(service.getState().user?.email).toBe('magic@example.com');
+      expect(service.getState().isAuthenticated).toBe(true);
+      // Token persisted
+      expect(localStorage.getItem('authcore_token')).toBe('jwt-x');
+      expect(localStorage.getItem('authcore_token_refresh')).toBe('ref-x');
+      // ?token=… was stripped from history
+      expect(replaceState).toHaveBeenCalled();
+    });
+
+    it('handleMagicLinkCallback (fragment) reads tokens after server redirect', async () => {
+      vi.stubGlobal(
+        'fetch',
+        mockFetch({
+          'GET /me': { status: 200, body: { ...mockUser, email: 'frag@example.com' } },
+        }),
+      );
+      vi.stubGlobal('window', {
+        location: {
+          href: 'http://app.example.com/cb#token=frag-jwt&refreshToken=frag-ref',
+          hash: '#token=frag-jwt&refreshToken=frag-ref',
+        },
+        history: { replaceState: vi.fn() },
+      });
+
+      const service = new AuthWebService<PublicUser>({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: true,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.handleMagicLinkCallback();
+
+      expect(service.getState().token).toBe('frag-jwt');
+      expect(service.getState().refreshToken).toBe('frag-ref');
+      expect(service.getState().user?.email).toBe('frag@example.com');
+      expect(localStorage.getItem('authcore_token')).toBe('frag-jwt');
+    });
+
+    it('handleMagicLinkCallback (cookie mode, no token in URL) just fetches /me', async () => {
+      vi.stubGlobal(
+        'fetch',
+        mockFetch({
+          'GET /me': { status: 200, body: { ...mockUser, email: 'cookie-magic@example.com' } },
+        }),
+      );
+      vi.stubGlobal('window', {
+        location: { href: 'http://app.example.com/cb', hash: '' },
+        history: { replaceState: vi.fn() },
+      });
+
+      const service = new AuthWebService<PublicUser>({
+        baseUrl: 'http://api.example.com',
+        mode: 'cookie',
+        persistSession: false,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.handleMagicLinkCallback();
+
+      expect(service.getState().user?.email).toBe('cookie-magic@example.com');
+      expect(service.getState().isAuthenticated).toBe(true);
+      expect(localStorage.getItem('authcore_token')).toBeNull();
+    });
+  });
 });

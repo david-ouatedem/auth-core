@@ -9,6 +9,7 @@ export type TokenType =
   | 'SESSION'
   | 'INVITATION'
   | 'REFRESH'
+  | 'MAGIC_LINK'
 
 /** A user record as stored in the database. */
 export interface User {
@@ -111,6 +112,7 @@ export interface EmailTemplates {
   verifyEmail?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
   resetPassword?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
   invitation?: EmailTemplate<{ email: string; link: string; ttlHours: number; role: string }>
+  magicLink?: EmailTemplate<{ email: string; link: string; ttlMinutes: number }>
 }
 
 /** Configuration for email features. */
@@ -227,7 +229,7 @@ export interface AuthCoreConfig {
   db: DatabaseAdapter
   session: SessionConfig
   email?: EmailConfig
-  features?: Array<'emailVerification' | 'passwordReset' | 'invitation'>
+  features?: Array<'emailVerification' | 'passwordReset' | 'invitation' | 'magicLink'>
   password?: {
     minLength?: number
     saltRounds?: number

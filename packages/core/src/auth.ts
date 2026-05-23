@@ -27,7 +27,13 @@ import {
   revokeAllRefreshTokensForUser,
 } from './features/refresh.js'
 import { startOAuth, completeOAuth } from './features/oauth.js'
-import { inviteSchema, acceptInvitationSchema } from './utils/validation.js'
+import { sendMagicLink as sendMagicLinkFeature, consumeMagicLink as consumeMagicLinkFeature } from './features/magicLink.js'
+import {
+  inviteSchema,
+  acceptInvitationSchema,
+  sendMagicLinkSchema,
+  consumeMagicLinkSchema,
+} from './utils/validation.js'
 
 /** Parse an `expiresIn` value (e.g. '30d', '15m', '2h', '90s') into milliseconds. */
 function parseDurationMs(value: string | undefined, fallbackMs: number): number {
@@ -137,6 +143,27 @@ export interface AuthCore {
   revokeAll(userId: string): Promise<void>
 
   /**
+   * Send a magic-link email. Always resolves successfully — does not reveal
+   * whether the email exists in the database (enumeration-safe). By default
+   * a new user is auto-created if none exists; the email is marked verified
+   * because receipt of the link proves email ownership.
+   *
+   * Requires the `magicLink` feature flag and a configured email provider.
+   *
+   * @throws AuthError(500, 'FEATURE_DISABLED') if the feature flag is off.
+   * @throws AuthError(500, 'EMAIL_NOT_CONFIGURED') if no email provider is set.
+   * @throws AuthError(500, 'MISSING_URL') if `magicLinkUrl` is not supplied.
+   */
+  sendMagicLink(input: unknown, params: { magicLinkUrl: string }): Promise<void>
+
+  /**
+   * Consume a magic-link token. Returns a full session: user + JWT + refresh.
+   * Tokens are single-use; a second call with the same raw token throws.
+   * @throws AuthError(400, 'INVALID_TOKEN') if the token is unknown or expired.
+   */
+  consumeMagicLink(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+
+  /**
    * Begin an OAuth flow with the provider registered under the given id (e.g. 'google').
    * Returns the authorization URL the user must be redirected to.
    * @throws AuthError if the provider isn't registered in `config.oauth`.
@@ -206,6 +233,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
   const hasEmailVerification = features.includes('emailVerification')
   const hasPasswordReset = features.includes('passwordReset')
   const hasInvitation = features.includes('invitation')
+  const hasMagicLink = features.includes('magicLink')
 
   return {
     async register(input) {
@@ -495,6 +523,72 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
     async revokeAll(userId) {
       await revokeAllRefreshTokensForUser({ userId, db })
+    },
+
+    async sendMagicLink(input, { magicLinkUrl }) {
+      if (!hasMagicLink) {
+        throw new AuthError('magicLink feature is not enabled', 'FEATURE_DISABLED', 500)
+      }
+      if (!email) {
+        throw new AuthError('Email provider is not configured', 'EMAIL_NOT_CONFIGURED', 500)
+      }
+      if (!magicLinkUrl) {
+        throw new AuthError(
+          'magicLinkUrl is required when the magicLink feature is enabled',
+          'MISSING_URL',
+          500,
+        )
+      }
+
+      const parsed = sendMagicLinkSchema.safeParse(input)
+      if (!parsed.success) {
+        // Always return successfully to prevent enumeration
+        return
+      }
+
+      // Intentionally swallow downstream errors — always 200
+      try {
+        await sendMagicLinkFeature({
+          email: parsed.data.email,
+          db,
+          emailProvider: email.provider,
+          from: email.from,
+          magicLinkUrl,
+          defaultRole,
+          ...(email.templates?.magicLink ? { template: email.templates.magicLink } : {}),
+        })
+      } catch {
+        // Swallow — no email enumeration
+      }
+    },
+
+    async consumeMagicLink(input) {
+      if (!hasMagicLink) {
+        throw new AuthError('magicLink feature is not enabled', 'FEATURE_DISABLED', 500)
+      }
+      const parsed = consumeMagicLinkSchema.safeParse(input)
+      if (!parsed.success) {
+        throw new AuthError('Token is required', 'INVALID_TOKEN', 400)
+      }
+
+      let consumed: { user: { id: string; email: string; emailVerified: boolean; role: string; createdAt: Date; updatedAt: Date; passwordHash: string } }
+      try {
+        consumed = await consumeMagicLinkFeature({ rawToken: parsed.data.token, db })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Invalid token'
+        throw new AuthError(message, 'INVALID_TOKEN', 400)
+      }
+
+      const publicUser = toPublicUser(consumed.user)
+      const token = signJwt(
+        { sub: consumed.user.id, email: consumed.user.email, role: consumed.user.role },
+        session.secret,
+        expiresIn,
+      )
+      const refreshToken = await issueRefreshToken({ userId: consumed.user.id, db, ttlMs: refreshTtlMs })
+
+      await callbacks.onSignIn?.(publicUser)
+      return { user: publicUser, token, refreshToken }
     },
 
     async oauthStart(providerId, redirectUri) {

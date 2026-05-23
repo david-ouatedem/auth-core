@@ -1249,3 +1249,241 @@ describe('createAuth().oauthCallback', () => {
     ).rejects.toMatchObject({ statusCode: 502, code: 'OAUTH_USERINFO_FAILED' })
   })
 })
+
+// ---- 0.12: magic-link ----
+
+const MAGIC_LINK_URL = 'https://app.example/magic'
+
+describe('createAuth().sendMagicLink', () => {
+  it('throws FEATURE_DISABLED when magicLink feature is off', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      email: { provider: createCaptureEmail().provider, from: 'a@b.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'FEATURE_DISABLED' })
+  })
+
+  it('throws EMAIL_NOT_CONFIGURED when no email provider is set', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'EMAIL_NOT_CONFIGURED' })
+  })
+
+  it('sends an email with the magic-link URL and a token query param', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ email: 'existing@example.com' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+
+    await auth.sendMagicLink(
+      { email: 'existing@example.com' },
+      { magicLinkUrl: MAGIC_LINK_URL },
+    )
+
+    expect(capture.sent).toHaveLength(1)
+    const email = capture.last()!
+    expect(email.to).toBe('existing@example.com')
+    expect(email.html).toContain(`${MAGIC_LINK_URL}?token=`)
+    expect(email.html).not.toContain(TEST_SECRET)
+  })
+
+  it('auto-creates a user with a sentinel passwordHash and emailVerified=true', async () => {
+    const capture = createCaptureEmail()
+    const createUser = vi.fn().mockImplementation(async (data) => ({
+      ...makeUser(),
+      email: data.email,
+      passwordHash: data.passwordHash,
+      emailVerified: false,
+    }))
+    const updateUser = vi.fn().mockImplementation(async (id, data) => ({
+      ...makeUser({ id }),
+      ...data,
+    }))
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser,
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+
+    await auth.sendMagicLink({ email: 'new@example.com' }, { magicLinkUrl: MAGIC_LINK_URL })
+
+    expect(createUser).toHaveBeenCalledOnce()
+    expect(createUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'new@example.com',
+        passwordHash: '!MAGIC_LINK_NO_PASSWORD',
+      }),
+    )
+    expect(updateUser).toHaveBeenCalledWith(expect.any(String), { emailVerified: true })
+    expect(capture.sent).toHaveLength(1)
+  })
+
+  it('still resolves successfully on invalid email input (no enumeration via validation error)', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'not-an-email' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).resolves.toBeUndefined()
+    expect(capture.sent).toHaveLength(0)
+  })
+
+  it('throws MISSING_URL when magicLinkUrl is empty', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: '' }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'MISSING_URL' })
+  })
+})
+
+describe('createAuth().consumeMagicLink', () => {
+  it('throws FEATURE_DISABLED when magicLink feature is off', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.consumeMagicLink({ token: 'x' })).rejects.toMatchObject({
+      code: 'FEATURE_DISABLED',
+    })
+  })
+
+  it('throws INVALID_TOKEN on missing token field', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({})).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the token is unknown', async () => {
+    const auth = createAuth({
+      db: makeMockDb({ findToken: vi.fn().mockResolvedValue(null) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({ token: 'unknown' })).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the token is expired (and deletes the row)', async () => {
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue({
+        id: 'tok-1',
+        userId: 'user-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('expired'),
+        expiresAt: new Date(Date.now() - 1_000),
+        createdAt: new Date(),
+      }),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({ token: 'expired' })).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+  })
+
+  it('returns a full session and deletes the token (single-use)', async () => {
+    const user = makeUser({ id: 'u-1', email: 'magic@example.com', emailVerified: true })
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const onSignIn = vi.fn()
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue({
+        id: 'tok-1',
+        userId: 'u-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('good-raw'),
+        expiresAt: new Date(Date.now() + 60_000),
+        createdAt: new Date(),
+      }),
+      findUserById: vi.fn().mockResolvedValue(user),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      callbacks: { onSignIn },
+    })
+
+    const result = await auth.consumeMagicLink({ token: 'good-raw' })
+
+    expect(result.user.id).toBe('u-1')
+    expect(result.user.email).toBe('magic@example.com')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+    expect(onSignIn).toHaveBeenCalledOnce()
+  })
+
+  it('refuses to replay: second consume with same token fails', async () => {
+    const findToken = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'tok-1',
+        userId: 'u-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('once'),
+        expiresAt: new Date(Date.now() + 60_000),
+        createdAt: new Date(),
+      })
+      .mockResolvedValue(null)
+    const db = makeMockDb({
+      findToken,
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'u-1' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+
+    await auth.consumeMagicLink({ token: 'once' })
+    await expect(auth.consumeMagicLink({ token: 'once' })).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+  })
+})
+

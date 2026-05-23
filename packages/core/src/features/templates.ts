@@ -71,3 +71,19 @@ export const defaultInvitationTemplate: EmailTemplate<{
     `,
   text: `You have been invited. Set your password by visiting: ${link}\n\nThis link expires in ${ttlHours} hours.`,
 })
+
+export const defaultMagicLinkTemplate: EmailTemplate<{
+  email: string
+  link: string
+  ttlMinutes: number
+}> = ({ link, ttlMinutes }) => ({
+  subject: 'Sign in to your account',
+  html: `
+      <p>Hello,</p>
+      <p>Click the link below to sign in:</p>
+      <p><a href="${link}">${link}</a></p>
+      <p>This link expires in ${ttlMinutes} minutes and can only be used once.</p>
+      <p>If you did not request this email, you can safely ignore it.</p>
+    `,
+  text: `Sign in by visiting: ${link}\n\nThis link expires in ${ttlMinutes} minutes and can only be used once.\n\nIf you did not request this email, you can safely ignore it.`,
+})

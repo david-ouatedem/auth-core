@@ -51,6 +51,16 @@ export const acceptInvitationSchema = (minPasswordLength = 8) =>
     password: passwordSchema(minPasswordLength),
   })
 
+/** Schema for POST /magic-link/send */
+export const sendMagicLinkSchema = z.object({
+  email: emailSchema,
+})
+
+/** Schema for POST /magic-link/consume */
+export const consumeMagicLinkSchema = z.object({
+  token: z.string().min(1, 'Token is required'),
+})
+
 export type RegisterInput = z.infer<ReturnType<typeof registerSchema>>
 export type LoginInput = z.infer<typeof loginSchema>
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>
@@ -58,3 +68,5 @@ export type ResetPasswordInput = z.infer<ReturnType<typeof resetPasswordSchema>>
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>
 export type InviteInput = z.infer<typeof inviteSchema>
 export type AcceptInvitationInput = z.infer<ReturnType<typeof acceptInvitationSchema>>
+export type SendMagicLinkInput = z.infer<typeof sendMagicLinkSchema>
+export type ConsumeMagicLinkInput = z.infer<typeof consumeMagicLinkSchema>

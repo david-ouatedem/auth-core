@@ -28,6 +28,8 @@ interface ResolvedRoutes {
   refresh: string
   revoke: string
   oauthStart: string
+  sendMagicLink: string
+  consumeMagicLink: string
 }
 
 export class AuthWebService<TUser extends PublicUser = PublicUser>
@@ -77,6 +79,8 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       refresh: routes?.refresh ?? '/refresh',
       revoke: routes?.revoke ?? '/revoke',
       oauthStart: routes?.oauthStart ?? '/oauth/:provider',
+      sendMagicLink: routes?.sendMagicLink ?? '/magic-link',
+      consumeMagicLink: routes?.consumeMagicLink ?? '/magic-link/consume',
     }
 
     this.listeners = new Set()
@@ -355,6 +359,66 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       }
     }
     // Both modes: fetch /me to populate the user.
+    await this.refreshUser()
+  }
+
+  async signInWithMagicLink(email: string): Promise<void> {
+    await this.client.post(this.paths.sendMagicLink, { email })
+  }
+
+  async handleMagicLinkCallback(): Promise<void> {
+    if (typeof window === 'undefined') return
+
+    const url = new URL(window.location.href)
+    const queryToken = url.searchParams.get('token')
+
+    // Case A: user clicked the email link directly — token is in ?token=…
+    // and we need to exchange it via the server.
+    if (queryToken) {
+      const raw = await this.client.get<unknown>(
+        `${this.paths.consumeMagicLink}?token=${encodeURIComponent(queryToken)}`,
+      )
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : (raw as AuthResponse<TUser>)
+      this.state = {
+        ...this.state,
+        user: response.user,
+        token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
+        isAuthenticated: true,
+      }
+      this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
+      // Strip ?token= from the URL so it doesn't sit in browser history.
+      url.searchParams.delete('token')
+      window.history.replaceState({}, '', url.toString())
+      this.notifyListeners()
+      return
+    }
+
+    // Case B: server already consumed the token and redirected us here with
+    // tokens in the fragment (api mode + magicLinkSuccessRedirect).
+    if (this.state.mode === 'api' && window.location.hash.length > 1) {
+      const fragment = window.location.hash.slice(1)
+      const params = new URLSearchParams(fragment)
+      const token = params.get('token')
+      const refreshToken = params.get('refreshToken')
+      if (token) {
+        this.state = {
+          ...this.state,
+          token,
+          refreshToken: refreshToken ?? null,
+          isAuthenticated: true,
+        }
+        this.setToken(token)
+        this.setRefreshToken(refreshToken)
+        url.hash = ''
+        window.history.replaceState({}, '', url.toString())
+      }
+    }
+
+    // Both modes: populate the user.
     await this.refreshUser()
   }
 

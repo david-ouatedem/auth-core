@@ -12,4 +12,8 @@ export interface AuthWebRoutesInterface {
   revoke?: string
   /** OAuth start path with `:provider` placeholder. Default: '/oauth/:provider'. */
   oauthStart?: string
+  /** Magic-link send path. Default: '/magic-link'. */
+  sendMagicLink?: string
+  /** Magic-link consume path. Default: '/magic-link/consume'. */
+  consumeMagicLink?: string
 }
