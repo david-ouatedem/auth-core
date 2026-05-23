@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-05-23
+
+Production-readiness pass 2 — adds OAuth (Google + extensible provider interface) and fixes a 0.10 regression on the Prisma adapter.
+
+### Added
+
+- **OAuth 2.0 + PKCE.**
+  - `oauth?: Record<string, OAuthProvider>` on `AuthCoreConfig` registers providers by id.
+  - `createGoogleProvider({ clientId, clientSecret })` exported from `@authcore/core`. Other providers are a ~80-line `OAuthProvider` implementation away (`exchangeCode`, `getUserInfo`, `authorize`).
+  - New core methods: `auth.oauthStart(providerId, redirectUri)` and `auth.oauthCallback(providerId, { code, state, redirectUri })`.
+  - New routes mounted by every framework adapter:
+    - `GET /auth/oauth/:provider` — redirects to provider authorization URL.
+    - `GET /auth/oauth/:provider/callback` — verifies state, exchanges code, mints session.
+  - **Stateless HMAC-signed state envelope** (no DB write at flow start). 10-minute TTL. Carries nonce, provider id, PKCE verifier, and redirectUri.
+  - **Auto-link policy**: existing OAuth account → load user; no account + no local user → create new user (sentinel password hash); no account + local user with provider-verified email → link; no account + local user with unverified email → `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409).
+  - **Cookie mode** sets the standard 3 cookies (JWT + refresh + optional CSRF) and redirects to `oauthSuccessRedirect`.
+  - **API mode** returns `{ user, token, refreshToken }` JSON, or — when `oauthSuccessRedirect` is set — redirects to that URL with `#token=…&refreshToken=…` for SPA pickup.
+  - New `OAuthAccount` model in `@authcore/prisma-adapter` (unique on `(provider, providerAccountId)`, cascade on user delete). New methods on `DatabaseAdapter`: `findOAuthAccount`, `createOAuthAccount`, `updateOAuthAccount`.
+
+- **Client-side OAuth helpers** in `@authcore/core-web` and `@authcore/react`:
+  - `oauthStartUrl(providerId)` — builds the full URL.
+  - `signInWithProvider(providerId)` — `window.location.href = oauthStartUrl(providerId)`.
+  - `handleOAuthCallback()` — on the SPA landing page, reads the URL fragment in api mode + fetches `/me` in both modes.
+  - `useAuth()` exposes all three.
+
+- **New error codes** on OAuth flows: `OAUTH_PROVIDER_UNKNOWN` (400), `OAUTH_EXCHANGE_FAILED` (502), `OAUTH_USERINFO_FAILED` (502), `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409).
+
+- **Documentation**:
+  - New `docs/security/oauth.md` covering server setup, client integration, Google client config, and adding new providers.
+  - VitePress sidebar now exposes the **Security** section (previously missing — `refresh-tokens.md`, `csrf.md`, `email-templates.md` from 0.10 were orphaned).
+
+### Fixed
+
+- **`REFRESH` tokens on Prisma (0.10 regression).** The 0.10 release added `REFRESH` to the TS `TokenType` union but the Prisma schema enum lacked it, and `toCoreTokenType()` threw on it. Apps using the Prisma adapter couldn't actually use refresh tokens. Now fixed: Prisma enum updated, `toCoreTokenType` updated, regression test added in `prismaAdapter.integration.test.ts`.
+
+### Changed
+
+- Custom database adapters must implement three new methods: `findOAuthAccount`, `createOAuthAccount`, `updateOAuthAccount`. Apps not using OAuth (no `config.oauth` set) never call these and can leave them as `async () => { throw new Error('OAuth not configured') }` if desired.
+- Default route paths for OAuth: `/oauth/:provider` and `/oauth/:provider/callback`. Override via `routes.oauth` / `routes.oauthCallback` on Express/Fastify config or via NestJS module options.
+
+### Notes for upgraders
+
+- Run `pnpm --filter @authcore/prisma-adapter db:push` (or generate a migration) to add the `OAuthAccount` table and the new `REFRESH` enum value.
+- If you maintain a custom `DatabaseAdapter`, add the three OAuth methods. They're optional if you never set `config.oauth`.
+
 ## [0.10.0] - 2026-05-22
 
 Production-readiness pass 1. Three opt-in features layered on top of 0.9; no breaking changes for apps using framework adapters.

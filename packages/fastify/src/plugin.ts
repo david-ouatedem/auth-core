@@ -19,11 +19,20 @@ export interface PluginConfig {
     acceptInvitation?: string
     refresh?: string
     revoke?: string
+    /** OAuth start route. Default: '/oauth/:provider'. Must include ':provider' placeholder. */
+    oauth?: string
+    /** OAuth callback route. Default: '/oauth/:provider/callback'. Must include ':provider' placeholder. */
+    oauthCallback?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
   /** If true, set httpOnly cookies on login/register/refresh/accept-invitation instead of returning token in body */
   useCookies?: boolean
+  /**
+   * Where to redirect the user after a successful OAuth callback in cookie mode.
+   * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
+   */
+  oauthSuccessRedirect?: string
 }
 
 function handleError(reply: FastifyReply, err: unknown): FastifyReply {
@@ -62,7 +71,10 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
     refresh: routePaths.refresh ?? '/refresh',
     revoke: routePaths.revoke ?? '/revoke',
+    oauth: routePaths.oauth ?? '/oauth/:provider',
+    oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
   }
+  const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
 
   const isProduction = process.env['NODE_ENV'] === 'production'
   const authRequired = createAuthRequired(auth, cookieName)
@@ -230,6 +242,43 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
         if (useCookies) {
           setAuthCookies(reply, token, refreshToken)
           return reply.send({ user })
+        }
+        return reply.send({ user, token, refreshToken })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // GET /oauth/:provider — kick off OAuth flow
+    fastify.get(paths.oauth, async (request, reply) => {
+      try {
+        const provider = String((request.params as { provider?: string }).provider ?? '')
+        const redirectUri = `${baseUrl}${paths.oauthCallback.replace(':provider', provider)}`
+        const { authorizationUrl } = await auth.oauthStart(provider, redirectUri)
+        return reply.redirect(authorizationUrl)
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // GET /oauth/:provider/callback — provider redirects here with ?code&state
+    fastify.get(paths.oauthCallback, async (request, reply) => {
+      try {
+        const provider = String((request.params as { provider?: string }).provider ?? '')
+        const q = request.query as { code?: string; state?: string }
+        const redirectUri = `${baseUrl}${paths.oauthCallback.replace(':provider', provider)}`
+        const { user, token, refreshToken } = await auth.oauthCallback(provider, {
+          code: q.code ?? '',
+          state: q.state ?? '',
+          redirectUri,
+        })
+        if (useCookies) {
+          setAuthCookies(reply, token, refreshToken)
+          return reply.redirect(oauthSuccessRedirect)
+        }
+        if (config.oauthSuccessRedirect) {
+          const params = new URLSearchParams({ token, refreshToken })
+          return reply.redirect(`${oauthSuccessRedirect}#${params.toString()}`)
         }
         return reply.send({ user, token, refreshToken })
       } catch (err) {

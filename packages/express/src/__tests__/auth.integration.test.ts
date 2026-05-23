@@ -74,6 +74,8 @@ describeIf('@authcore/express integration', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -273,6 +275,8 @@ describeIf('@authcore/express integration', () => {
 describeIf('@authcore/express — extended flows', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -509,6 +513,8 @@ function parseCookies(header: string | undefined): Record<string, string> {
 describeIf('@authcore/express — refresh tokens', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -669,6 +675,8 @@ describeIf('@authcore/express — refresh tokens', () => {
 describeIf('@authcore/express — CSRF (opt-in)', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -803,5 +811,196 @@ describeIf('@authcore/express — CSRF (opt-in)', () => {
     })
     const setCookie = reg.headers['set-cookie']!
     expect(setCookie.some((c: string) => c.startsWith('authcore_token_csrf='))).toBe(false)
+  })
+})
+
+// ---- 0.11: OAuth ----
+
+interface FakeProviderOptions {
+  email?: string
+  emailVerified?: boolean
+  providerId?: string
+  exchangeShouldThrow?: boolean
+}
+
+function makeFakeProvider(opts: FakeProviderOptions = {}) {
+  const {
+    email = 'oauth@example.com',
+    emailVerified = true,
+    providerId = 'google',
+    exchangeShouldThrow = false,
+  } = opts
+  return {
+    id: providerId,
+    scopes: ['openid', 'email', 'profile'],
+    authorize: ({ state, codeChallenge, redirectUri }: { state: string; codeChallenge: string; redirectUri: string }) =>
+      `https://provider.example/authorize?state=${state}&challenge=${codeChallenge}&redirect=${encodeURIComponent(redirectUri)}`,
+    exchangeCode: async () => {
+      if (exchangeShouldThrow) throw new Error('upstream fail')
+      return { accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresIn: 3600 }
+    },
+    getUserInfo: async () => ({
+      id: 'remote-user-1',
+      email,
+      emailVerified,
+      name: 'Remote User',
+    }),
+  }
+}
+
+describeIf('@authcore/express OAuth (0.11)', () => {
+  it('GET /auth/oauth/google → 302 redirect to provider authorize URL', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeProvider() },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const res = await request(oauthApp).get('/auth/oauth/google')
+    expect(res.status).toBe(302)
+    expect(res.headers['location']).toContain('https://provider.example/authorize')
+    expect(res.headers['location']).toContain('state=')
+  })
+
+  it('rejects callback with bad state (401)', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeProvider() },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const res = await request(oauthApp)
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'abc', state: 'forged.signature' })
+    expect(res.status).toBe(401)
+    expect(res.body.code).toBe('INVALID_TOKEN')
+  })
+
+  it('api mode: callback creates new user + returns JSON with token + refreshToken', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeProvider({ email: 'newoauth@example.com' }) },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    // Step 1: hit start route, capture redirect to extract state
+    const startRes = await request(oauthApp).get('/auth/oauth/google')
+    const url = new URL(startRes.headers['location']!)
+    const state = url.searchParams.get('state')!
+
+    // Step 2: simulate provider callback
+    const cbRes = await request(oauthApp)
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'remote-code', state })
+
+    expect(cbRes.status).toBe(200)
+    expect(cbRes.body.user.email).toBe('newoauth@example.com')
+    expect(cbRes.body.token).toBeTruthy()
+    expect(cbRes.body.refreshToken).toBeTruthy()
+
+    // User and OAuth account were persisted
+    const user = await prisma.user.findUnique({ where: { email: 'newoauth@example.com' } })
+    expect(user).not.toBeNull()
+    const account = await prisma.oAuthAccount.findUnique({
+      where: { provider_providerAccountId: { provider: 'google', providerAccountId: 'remote-user-1' } },
+    })
+    expect(account).not.toBeNull()
+    expect(account!.userId).toBe(user!.id)
+  })
+
+  it('cookie mode: callback sets 3 cookies and redirects to success URL', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+      oauth: { google: makeFakeProvider({ email: 'cookieoauth@example.com' }) },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use((req, _res, next) => {
+      req.cookies = parseCookies(req.headers.cookie)
+      next()
+    })
+    oauthApp.use('/auth', auth.router({
+      baseUrl: 'http://localhost',
+      useCookies: true,
+      oauthSuccessRedirect: '/dashboard',
+    }))
+
+    const startRes = await request(oauthApp).get('/auth/oauth/google')
+    const url = new URL(startRes.headers['location']!)
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await request(oauthApp)
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'remote-code', state })
+
+    expect(cbRes.status).toBe(302)
+    expect(cbRes.headers['location']).toBe('/dashboard')
+    const setCookie = cbRes.headers['set-cookie']!
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token='))).toBe(true)
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token_refresh='))).toBe(true)
+    expect(setCookie.some((c: string) => c.startsWith('authcore_token_csrf='))).toBe(true)
+  })
+
+  it('rejects callback when provider says email is unverified for an existing local user (409)', async () => {
+    // Pre-seed a local user with the same email
+    await prisma.user.create({
+      data: {
+        email: 'existing@example.com',
+        passwordHash: '$2b$12$existinghashforatestuserdoesnotneedtobereal',
+        emailVerified: false,
+      },
+    })
+
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeProvider({ email: 'existing@example.com', emailVerified: false }) },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const startRes = await request(oauthApp).get('/auth/oauth/google')
+    const url = new URL(startRes.headers['location']!)
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await request(oauthApp)
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'x', state })
+
+    expect(cbRes.status).toBe(409)
+    expect(cbRes.body.code).toBe('EMAIL_NOT_VERIFIED_BY_PROVIDER')
+  })
+
+  it('wraps upstream exchange failures as 502 OAUTH_EXCHANGE_FAILED', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeProvider({ exchangeShouldThrow: true }) },
+    })
+    const oauthApp = express()
+    oauthApp.use(express.json())
+    oauthApp.use('/auth', auth.router({ baseUrl: 'http://localhost' }))
+
+    const startRes = await request(oauthApp).get('/auth/oauth/google')
+    const url = new URL(startRes.headers['location']!)
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await request(oauthApp)
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'x', state })
+
+    expect(cbRes.status).toBe(502)
+    expect(cbRes.body.code).toBe('OAUTH_EXCHANGE_FAILED')
   })
 })

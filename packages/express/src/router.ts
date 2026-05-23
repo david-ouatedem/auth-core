@@ -19,11 +19,20 @@ export interface RouterConfig {
     acceptInvitation?: string
     refresh?: string
     revoke?: string
+    /** OAuth start route. Default: '/oauth/:provider'. Must include ':provider' placeholder. */
+    oauth?: string
+    /** OAuth callback route. Default: '/oauth/:provider/callback'. Must include ':provider' placeholder. */
+    oauthCallback?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
   /** If true, set httpOnly cookies on login/register/refresh/accept-invitation instead of returning the token in the body */
   useCookies?: boolean
+  /**
+   * Where to redirect the user after a successful OAuth callback in cookie mode.
+   * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
+   */
+  oauthSuccessRedirect?: string
 }
 
 function handleError(res: Response, err: unknown): void {
@@ -67,7 +76,10 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
     refresh: routePaths.refresh ?? '/refresh',
     revoke: routePaths.revoke ?? '/revoke',
+    oauth: routePaths.oauth ?? '/oauth/:provider',
+    oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
   }
+  const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
 
   function setAuthCookies(res: Response, token: string, refreshToken: string): void {
     res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' })
@@ -248,6 +260,45 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
       if (useCookies) {
         setAuthCookies(res, token, refreshToken)
         res.json({ user })
+      } else {
+        res.json({ user, token, refreshToken })
+      }
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // GET /oauth/:provider — kick off OAuth flow
+  router.get(paths.oauth, async (req, res) => {
+    try {
+      const provider = String(req.params['provider'] ?? '')
+      const redirectUri = `${baseUrl}${paths.oauthCallback.replace(':provider', provider)}`
+      const { authorizationUrl } = await auth.oauthStart(provider, redirectUri)
+      res.redirect(authorizationUrl)
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // GET /oauth/:provider/callback — provider redirects here with ?code&state
+  router.get(paths.oauthCallback, async (req, res) => {
+    try {
+      const provider = String(req.params['provider'] ?? '')
+      const code = typeof req.query['code'] === 'string' ? req.query['code'] : ''
+      const state = typeof req.query['state'] === 'string' ? req.query['state'] : ''
+      const redirectUri = `${baseUrl}${paths.oauthCallback.replace(':provider', provider)}`
+      const { user, token, refreshToken } = await auth.oauthCallback(provider, {
+        code,
+        state,
+        redirectUri,
+      })
+      if (useCookies) {
+        setAuthCookies(res, token, refreshToken)
+        res.redirect(oauthSuccessRedirect)
+      } else if (config.oauthSuccessRedirect) {
+        // API mode + redirect requested: pass tokens in URL fragment so the SPA can pick them up.
+        const params = new URLSearchParams({ token, refreshToken })
+        res.redirect(`${oauthSuccessRedirect}#${params.toString()}`)
       } else {
         res.json({ user, token, refreshToken })
       }

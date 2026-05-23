@@ -27,6 +27,7 @@ interface ResolvedRoutes {
   acceptInvitation: string
   refresh: string
   revoke: string
+  oauthStart: string
 }
 
 export class AuthWebService<TUser extends PublicUser = PublicUser>
@@ -75,6 +76,7 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       acceptInvitation: routes?.acceptInvitation ?? '/accept-invitation',
       refresh: routes?.refresh ?? '/refresh',
       revoke: routes?.revoke ?? '/revoke',
+      oauthStart: routes?.oauthStart ?? '/oauth/:provider',
     }
 
     this.listeners = new Set()
@@ -316,6 +318,44 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
     this.setToken(null)
     this.setRefreshToken(null)
     this.notifyListeners()
+  }
+
+  oauthStartUrl(providerId: string): string {
+    const path = this.paths.oauthStart.replace(':provider', encodeURIComponent(providerId))
+    return `${this.state.baseUrl}${path}`
+  }
+
+  signInWithProvider(providerId: string): void {
+    if (typeof window === 'undefined') return
+    window.location.href = this.oauthStartUrl(providerId)
+  }
+
+  async handleOAuthCallback(): Promise<void> {
+    if (typeof window === 'undefined') return
+
+    // API mode: server may have redirected with #token=...&refreshToken=... fragment.
+    if (this.state.mode === 'api' && window.location.hash.length > 1) {
+      const fragment = window.location.hash.slice(1)
+      const params = new URLSearchParams(fragment)
+      const token = params.get('token')
+      const refreshToken = params.get('refreshToken')
+      if (token) {
+        this.state = {
+          ...this.state,
+          token,
+          refreshToken: refreshToken ?? null,
+          isAuthenticated: true,
+        }
+        this.setToken(token)
+        this.setRefreshToken(refreshToken)
+        // Strip the fragment so the token isn't sitting in history/the address bar.
+        const url = new URL(window.location.href)
+        url.hash = ''
+        window.history.replaceState({}, '', url.toString())
+      }
+    }
+    // Both modes: fetch /me to populate the user.
+    await this.refreshUser()
   }
 
   async refreshUser(): Promise<void> {

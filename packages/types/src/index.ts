@@ -48,6 +48,33 @@ export interface CreateTokenInput {
   expiresAt: Date
 }
 
+/**
+ * A linked OAuth account. One user can have many OAuth accounts (one per provider).
+ * (provider, providerAccountId) is the unique key — that's the identity the provider asserts.
+ */
+export interface OAuthAccount {
+  id: string
+  userId: string
+  /** Provider id, e.g. 'google', 'github'. */
+  provider: string
+  /** The user's identifier at the provider (Google's `sub`, GitHub's numeric id, etc.). */
+  providerAccountId: string
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface CreateOAuthAccountInput {
+  userId: string
+  provider: string
+  providerAccountId: string
+  accessToken: string
+  refreshToken?: string | null
+  expiresAt?: Date | null
+}
+
 /** Safe user shape returned to callers (no passwordHash). */
 export type PublicUser = Omit<User, 'passwordHash'>
 
@@ -129,6 +156,57 @@ export interface DatabaseAdapter {
    * stale verification/reset tokens.
    */
   deleteTokensByUserAndType(userId: string, type: TokenType): Promise<void>
+  /** Look up an OAuth account by (provider, providerAccountId). Returns null if no match. */
+  findOAuthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null>
+  /** Create a new linked OAuth account row. */
+  createOAuthAccount(data: CreateOAuthAccountInput): Promise<OAuthAccount>
+  /** Update the access/refresh token + expiry on an existing OAuth account (post-refresh). */
+  updateOAuthAccount(
+    id: string,
+    data: Partial<Pick<OAuthAccount, 'accessToken' | 'refreshToken' | 'expiresAt'>>,
+  ): Promise<OAuthAccount>
+}
+
+/** User profile returned by an OAuth provider. */
+export interface OAuthProviderUserInfo {
+  /** The user's identifier at the provider (must be stable, e.g. Google's `sub`). */
+  id: string
+  email: string
+  /** Whether the provider has verified the email. Required for the auto-link policy. */
+  emailVerified: boolean
+  name?: string
+  picture?: string
+}
+
+/** Tokens returned by an OAuth provider's token endpoint. */
+export interface OAuthProviderTokens {
+  accessToken: string
+  refreshToken?: string
+  /** Lifetime in seconds (provider-specific). */
+  expiresIn?: number
+  /** OpenID Connect id_token, if the provider supports it. */
+  idToken?: string
+}
+
+/**
+ * Abstraction over an OAuth 2.0 / OpenID Connect identity provider.
+ * `createGoogleProvider(...)` ships in `@authcore/core`; community PRs add more.
+ */
+export interface OAuthProvider {
+  /** Stable provider id, used as the URL slug (e.g. 'google'). */
+  id: string
+  /** Scopes requested in the authorization URL. */
+  scopes: string[]
+  /** Build the URL to redirect the user to for authorization. */
+  authorize(params: { state: string; codeChallenge: string; redirectUri: string }): string
+  /** Exchange the authorization code (+ PKCE verifier) for tokens. */
+  exchangeCode(params: {
+    code: string
+    codeVerifier: string
+    redirectUri: string
+  }): Promise<OAuthProviderTokens>
+  /** Fetch the user profile from the provider. `emailVerified` MUST be populated honestly. */
+  getUserInfo(accessToken: string, idToken?: string): Promise<OAuthProviderUserInfo>
 }
 
 /**
@@ -158,4 +236,9 @@ export interface AuthCoreConfig {
     defaultRole?: string
   }
   callbacks?: AuthCallbacks
+  /**
+   * Map of OAuth providers keyed by provider id (e.g. `{ google: createGoogleProvider({...}) }`).
+   * When set, framework adapters mount `GET /auth/oauth/:provider` and `GET /auth/oauth/:provider/callback`.
+   */
+  oauth?: Record<string, OAuthProvider>
 }

@@ -100,6 +100,8 @@ describeIf('@authcore/nestjs integration', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -457,6 +459,8 @@ describeIf('@authcore/nestjs — cookie mode', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -503,6 +507,8 @@ describeIf('@authcore/nestjs — custom cookieName', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -547,6 +553,8 @@ describeIf('@authcore/nestjs — refresh tokens', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -634,6 +642,8 @@ describeIf('@authcore/nestjs — CSRF (opt-in)', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -698,5 +708,69 @@ describeIf('@authcore/nestjs — CSRF (opt-in)', () => {
       .get('/auth/me')
       .set('Cookie', cookieHeader)
     expect(meRes.status).toBe(200)
+  })
+})
+
+// ---- 0.11: OAuth ----
+
+function makeFakeNestProvider(opts: { email?: string; emailVerified?: boolean } = {}) {
+  const { email = 'oauth@example.com', emailVerified = true } = opts
+  return {
+    id: 'google',
+    scopes: ['openid', 'email', 'profile'],
+    authorize: ({ state, codeChallenge, redirectUri }: { state: string; codeChallenge: string; redirectUri: string }) =>
+      `https://provider.example/authorize?state=${state}&challenge=${codeChallenge}&redirect=${encodeURIComponent(redirectUri)}`,
+    exchangeCode: async () => ({ accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresIn: 3600 }),
+    getUserInfo: async () => ({ id: 'remote-1', email, emailVerified, name: 'Remote' }),
+  }
+}
+
+describeIf('@authcore/nestjs OAuth (0.11)', () => {
+  let oauthApp: INestApplication
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AuthModule.register({
+          db: prismaAdapter(prisma),
+          session: { strategy: 'jwt', secret: AUTH_SECRET },
+          oauth: { google: makeFakeNestProvider({ email: 'nest-oauth@example.com' }) },
+        }),
+      ],
+    }).compile()
+    oauthApp = moduleRef.createNestApplication()
+    await oauthApp.init()
+  })
+
+  afterAll(async () => {
+    await oauthApp.close()
+  })
+
+  it('GET /auth/oauth/google → 302 redirect to provider authorize URL', async () => {
+    const res = await request(oauthApp.getHttpServer()).get('/auth/oauth/google')
+    expect(res.status).toBe(302)
+    expect(res.headers['location']).toContain('https://provider.example/authorize')
+    expect(res.headers['location']).toContain('state=')
+  })
+
+  it('callback completes OAuth flow and returns JSON (api mode)', async () => {
+    const startRes = await request(oauthApp.getHttpServer()).get('/auth/oauth/google')
+    const url = new URL(startRes.headers['location']!)
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await request(oauthApp.getHttpServer())
+      .get(`/auth/oauth/google/callback?code=remote-code&state=${encodeURIComponent(state)}`)
+
+    expect(cbRes.status).toBe(200)
+    expect(cbRes.body.user.email).toBe('nest-oauth@example.com')
+    expect(cbRes.body.token).toBeTruthy()
+    expect(cbRes.body.refreshToken).toBeTruthy()
+  })
+
+  it('rejects callback with bad state (401)', async () => {
+    const res = await request(oauthApp.getHttpServer())
+      .get('/auth/oauth/google/callback')
+      .query({ code: 'abc', state: 'forged.signature' })
+    expect(res.status).toBe(401)
   })
 })

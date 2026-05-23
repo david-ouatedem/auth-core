@@ -700,4 +700,139 @@ describe('AuthWebService — refresh tokens', () => {
     expect(service.getState().token).toBe('persisted-jwt');
     expect(service.getState().refreshToken).toBe('persisted-refresh');
   });
+
+  // ---- 0.11: OAuth ----
+
+  describe('OAuth client helpers', () => {
+    it('oauthStartUrl builds the full URL with provider id substituted', () => {
+      const service = new AuthWebService({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: false,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      expect(service.oauthStartUrl('google')).toBe('http://api.example.com/oauth/google');
+    });
+
+    it('signInWithProvider does a full-page navigate to the start URL', () => {
+      const locationHref = { value: '' };
+      vi.stubGlobal('window', {
+        location: {
+          get href() { return locationHref.value },
+          set href(v: string) { locationHref.value = v },
+          hash: '',
+        },
+        history: { replaceState: vi.fn() },
+      });
+
+      const service = new AuthWebService({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: false,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      service.signInWithProvider('google');
+      expect(locationHref.value).toBe('http://api.example.com/oauth/google');
+    });
+
+    it('handleOAuthCallback (api mode) reads token+refreshToken from URL fragment then fetches /me', async () => {
+      vi.stubGlobal('fetch', mockFetch({
+        'GET /me': { status: 200, body: { ...mockUser, email: 'oauth-user@example.com' } },
+      }));
+      vi.stubGlobal('window', {
+        location: {
+          href: 'http://app.example.com/callback#token=jwt-from-oauth&refreshToken=ref-from-oauth',
+          hash: '#token=jwt-from-oauth&refreshToken=ref-from-oauth',
+        },
+        history: { replaceState: vi.fn() },
+      });
+
+      const service = new AuthWebService<PublicUser>({
+        baseUrl: 'http://api.example.com',
+        mode: 'api',
+        persistSession: true,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.handleOAuthCallback();
+
+      expect(service.getState().token).toBe('jwt-from-oauth');
+      expect(service.getState().refreshToken).toBe('ref-from-oauth');
+      expect(service.getState().user?.email).toBe('oauth-user@example.com');
+      expect(service.getState().isAuthenticated).toBe(true);
+      // Token persisted in localStorage
+      expect(localStorage.getItem('authcore_token')).toBe('jwt-from-oauth');
+      expect(localStorage.getItem('authcore_token_refresh')).toBe('ref-from-oauth');
+    });
+
+    it('handleOAuthCallback (cookie mode) skips fragment parsing and just fetches /me', async () => {
+      vi.stubGlobal('fetch', mockFetch({
+        'GET /me': { status: 200, body: { ...mockUser, email: 'cookie-oauth@example.com' } },
+      }));
+      vi.stubGlobal('window', {
+        location: { href: 'http://app.example.com/callback', hash: '' },
+        history: { replaceState: vi.fn() },
+      });
+
+      const service = new AuthWebService<PublicUser>({
+        baseUrl: 'http://api.example.com',
+        mode: 'cookie',
+        persistSession: false,
+        storageKey: 'authcore_token',
+        token: null,
+        refreshToken: null,
+        user: null,
+        error: null,
+        isLoading: false,
+        isAuthenticated: false,
+      });
+
+      await service.handleOAuthCallback();
+
+      expect(service.getState().user?.email).toBe('cookie-oauth@example.com');
+      expect(service.getState().isAuthenticated).toBe(true);
+      // No token persisted in cookie mode
+      expect(localStorage.getItem('authcore_token')).toBeNull();
+    });
+
+    it('oauthStart route override threads through oauthStartUrl', () => {
+      const service = new AuthWebService(
+        {
+          baseUrl: 'http://api.example.com',
+          mode: 'api',
+          persistSession: false,
+          storageKey: 'authcore_token',
+          token: null,
+          refreshToken: null,
+          user: null,
+          error: null,
+          isLoading: false,
+          isAuthenticated: false,
+        },
+        { oauthStart: '/v2/sso/:provider/start' },
+      );
+
+      expect(service.oauthStartUrl('github')).toBe('http://api.example.com/v2/sso/github/start');
+    });
+  });
 });

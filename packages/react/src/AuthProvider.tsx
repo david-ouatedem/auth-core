@@ -21,6 +21,15 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
   refresh(): Promise<AuthResponse<TUser>>
   /** Revoke the current refresh token server-side and clear local state. */
   revokeSession(): Promise<void>
+  /** Build the OAuth start URL for a provider (e.g. for use in a styled `<a>` tag). */
+  oauthStartUrl(providerId: string): string
+  /** Navigate the current window to the OAuth start URL for a provider. */
+  signInWithProvider(providerId: string): void
+  /**
+   * Handle the OAuth callback on the landing page the server redirected to.
+   * In cookie mode fetches `/me`. In api mode reads the token from the URL fragment.
+   */
+  handleOAuthCallback(): Promise<void>
 }
 
 // Context is typed with the base PublicUser. useAuth<TUser>() narrows via a type assertion,
@@ -123,6 +132,9 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
     refreshUser: () => service.refreshUser(),
     refresh: () => service.refresh(),
     revokeSession: () => service.revokeSession(),
+    oauthStartUrl: (providerId) => service.oauthStartUrl(providerId),
+    signInWithProvider: (providerId) => service.signInWithProvider(providerId),
+    handleOAuthCallback: () => service.handleOAuthCallback(),
   }
 
   return (

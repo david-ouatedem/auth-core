@@ -39,6 +39,7 @@ describeIf('prismaAdapter (integration)', () => {
   beforeEach(async () => {
     // Clean slate for each test
     await prisma.token.deleteMany()
+    await prisma.oAuthAccount.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -218,6 +219,121 @@ describeIf('prismaAdapter (integration)', () => {
 
       expect(expired).toBeNull()
       expect(valid).not.toBeNull()
+    })
+
+    // 0.11 regression test: REFRESH tokens round-trip through the adapter.
+    // Pre-0.11 the Prisma enum lacked REFRESH and toCoreTokenType threw on it.
+    it('REFRESH tokens round-trip: create, find, delete (0.11 regression test)', async () => {
+      const db = adapter()
+      const user = await db.createUser({ email: 'refresh@example.com', passwordHash: 'h' })
+
+      const raw = 'refresh-roundtrip-raw-token'
+      const created = await db.createToken({
+        userId: user.id,
+        type: 'REFRESH',
+        token: hashToken(raw),
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+      })
+      expect(created.type).toBe('REFRESH')
+
+      const found = await db.findToken(raw, 'REFRESH')
+      expect(found).not.toBeNull()
+      expect(found!.type).toBe('REFRESH')
+
+      await db.deleteToken(created.id)
+      expect(await db.findToken(raw, 'REFRESH')).toBeNull()
+    })
+  })
+
+  // ---- 0.11: OAuthAccount operations ----
+
+  describe('OAuthAccount operations', () => {
+    it('creates and finds an OAuth account by (provider, providerAccountId)', async () => {
+      const db = adapter()
+      const user = await db.createUser({ email: 'oauth@example.com', passwordHash: 'h' })
+
+      const created = await db.createOAuthAccount({
+        userId: user.id,
+        provider: 'google',
+        providerAccountId: 'remote-sub-1',
+        accessToken: 'access-1',
+        refreshToken: 'refresh-1',
+        expiresAt: new Date(Date.now() + 3600_000),
+      })
+
+      expect(created.userId).toBe(user.id)
+      expect(created.provider).toBe('google')
+      expect(created.providerAccountId).toBe('remote-sub-1')
+      expect(created.refreshToken).toBe('refresh-1')
+
+      const found = await db.findOAuthAccount('google', 'remote-sub-1')
+      expect(found).not.toBeNull()
+      expect(found!.id).toBe(created.id)
+    })
+
+    it('returns null when (provider, providerAccountId) does not exist', async () => {
+      const db = adapter()
+      const found = await db.findOAuthAccount('google', 'never-existed')
+      expect(found).toBeNull()
+    })
+
+    it('updates access/refresh/expiresAt on updateOAuthAccount', async () => {
+      const db = adapter()
+      const user = await db.createUser({ email: 'update-oauth@example.com', passwordHash: 'h' })
+      const created = await db.createOAuthAccount({
+        userId: user.id,
+        provider: 'google',
+        providerAccountId: 'remote-sub-2',
+        accessToken: 'old-access',
+      })
+
+      const updated = await db.updateOAuthAccount(created.id, {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: new Date('2030-01-01'),
+      })
+
+      expect(updated.accessToken).toBe('new-access')
+      expect(updated.refreshToken).toBe('new-refresh')
+      expect(updated.expiresAt?.toISOString()).toBe(new Date('2030-01-01').toISOString())
+    })
+
+    it('cascades delete on user removal', async () => {
+      const db = adapter()
+      const user = await db.createUser({ email: 'cascade@example.com', passwordHash: 'h' })
+      await db.createOAuthAccount({
+        userId: user.id,
+        provider: 'google',
+        providerAccountId: 'cascade-sub',
+        accessToken: 'access',
+      })
+
+      await prisma.user.delete({ where: { id: user.id } })
+
+      const found = await db.findOAuthAccount('google', 'cascade-sub')
+      expect(found).toBeNull()
+    })
+
+    it('enforces unique (provider, providerAccountId)', async () => {
+      const db = adapter()
+      const userA = await db.createUser({ email: 'a-unique@example.com', passwordHash: 'h' })
+      const userB = await db.createUser({ email: 'b-unique@example.com', passwordHash: 'h' })
+
+      await db.createOAuthAccount({
+        userId: userA.id,
+        provider: 'google',
+        providerAccountId: 'shared-sub',
+        accessToken: 'access',
+      })
+
+      await expect(
+        db.createOAuthAccount({
+          userId: userB.id,
+          provider: 'google',
+          providerAccountId: 'shared-sub',
+          accessToken: 'access',
+        }),
+      ).rejects.toThrow()
     })
   })
 })

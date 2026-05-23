@@ -10,4 +10,6 @@ export interface AuthWebRoutesInterface {
   acceptInvitation?: string
   refresh?: string
   revoke?: string
+  /** OAuth start path with `:provider` placeholder. Default: '/oauth/:provider'. */
+  oauthStart?: string
 }

@@ -9,6 +9,7 @@ export default defineConfig({
       { text: 'Guide', link: '/getting-started' },
       { text: 'Adapters', link: '/adapters/prisma' },
       { text: 'Integrations', link: '/integrations/express' },
+      { text: 'Security', link: '/security/refresh-tokens' },
       { text: 'Examples', link: '/examples/api-only' },
     ],
     sidebar: [
@@ -34,6 +35,15 @@ export default defineConfig({
           { text: 'Fastify', link: '/integrations/fastify' },
           { text: 'NestJS', link: '/integrations/nestjs' },
           { text: 'React', link: '/integrations/react' },
+        ],
+      },
+      {
+        text: 'Security',
+        items: [
+          { text: 'Refresh Tokens', link: '/security/refresh-tokens' },
+          { text: 'CSRF', link: '/security/csrf' },
+          { text: 'OAuth (Google)', link: '/security/oauth' },
+          { text: 'Email Templates', link: '/security/email-templates' },
         ],
       },
       {

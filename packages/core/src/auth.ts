@@ -26,6 +26,7 @@ import {
   revokeRefreshToken,
   revokeAllRefreshTokensForUser,
 } from './features/refresh.js'
+import { startOAuth, completeOAuth } from './features/oauth.js'
 import { inviteSchema, acceptInvitationSchema } from './utils/validation.js'
 
 /** Parse an `expiresIn` value (e.g. '30d', '15m', '2h', '90s') into milliseconds. */
@@ -134,6 +135,27 @@ export interface AuthCore {
    * Revoke every outstanding refresh token for a user ("log out everywhere").
    */
   revokeAll(userId: string): Promise<void>
+
+  /**
+   * Begin an OAuth flow with the provider registered under the given id (e.g. 'google').
+   * Returns the authorization URL the user must be redirected to.
+   * @throws AuthError if the provider isn't registered in `config.oauth`.
+   */
+  oauthStart(
+    providerId: string,
+    redirectUri: string,
+  ): Promise<{ authorizationUrl: string; state: string }>
+
+  /**
+   * Complete an OAuth callback. Validates state, exchanges code for tokens, links or creates
+   * the user according to the auto-link policy (email-verified only).
+   * @throws AuthError on invalid state (401), EMAIL_NOT_VERIFIED_BY_PROVIDER (409), or
+   *   upstream provider failure (502).
+   */
+  oauthCallback(
+    providerId: string,
+    params: { code: string; state: string; redirectUri: string },
+  ): Promise<{ user: PublicUser; token: string; refreshToken: string; isNewUser: boolean }>
 
   /** The resolved configuration this instance was created with. */
   readonly config: AuthCoreConfig
@@ -473,6 +495,66 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
     async revokeAll(userId) {
       await revokeAllRefreshTokensForUser({ userId, db })
+    },
+
+    async oauthStart(providerId, redirectUri) {
+      const provider = config.oauth?.[providerId]
+      if (!provider) {
+        throw new AuthError(
+          `OAuth provider '${providerId}' is not configured`,
+          'OAUTH_PROVIDER_UNKNOWN',
+          400,
+        )
+      }
+      return startOAuth({ provider, redirectUri, secret: session.secret })
+    },
+
+    async oauthCallback(providerId, { code, state, redirectUri }) {
+      const provider = config.oauth?.[providerId]
+      if (!provider) {
+        throw new AuthError(
+          `OAuth provider '${providerId}' is not configured`,
+          'OAUTH_PROVIDER_UNKNOWN',
+          400,
+        )
+      }
+      let result
+      try {
+        result = await completeOAuth({
+          provider,
+          state,
+          code,
+          redirectUri,
+          secret: session.secret,
+          db,
+          defaultRole,
+        })
+      } catch (err) {
+        // Re-wrap OAuthError-shaped errors as AuthError so callers get a consistent type.
+        if (err && typeof err === 'object' && (err as { isOAuthError?: boolean }).isOAuthError) {
+          const e = err as Error & { code: string; statusCode: number }
+          throw new AuthError(e.message, e.code, e.statusCode)
+        }
+        throw err
+      }
+
+      const { user, isNewUser } = result
+      const publicUser = toPublicUser(user)
+      const token = signJwt(
+        { sub: user.id, email: user.email, role: user.role },
+        session.secret,
+        expiresIn,
+      )
+      const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
+
+      // Fire onSignUp if this was a brand-new user; otherwise fire onSignIn.
+      if (isNewUser) {
+        await callbacks.onSignUp?.(publicUser)
+      } else {
+        await callbacks.onSignIn?.(publicUser)
+      }
+
+      return { user: publicUser, token, refreshToken, isNewUser }
     },
 
     config,

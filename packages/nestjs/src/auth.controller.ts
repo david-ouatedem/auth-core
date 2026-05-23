@@ -3,6 +3,8 @@ import {
   Post,
   Get,
   Body,
+  Param,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -27,6 +29,11 @@ import type { PublicUser } from '@authcore/types'
 
 interface ModuleOptions {
   baseUrl?: string
+  /**
+   * Where to redirect the user after a successful OAuth callback in cookie mode.
+   * Default: '/'. Ignored when `useCookies` is false (the response is JSON).
+   */
+  oauthSuccessRedirect?: string
 }
 
 function toHttpException(err: unknown): HttpException {
@@ -225,6 +232,47 @@ export class AuthController {
         return { user }
       }
       return { user, token, refreshToken }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Get('oauth/:provider')
+  async oauthStart(@Param('provider') provider: string, @Res() res: Response): Promise<void> {
+    try {
+      const baseUrl = this.options.baseUrl ?? ''
+      const redirectUri = `${baseUrl}/auth/oauth/${provider}/callback`
+      const { authorizationUrl } = await this.auth.oauthStart(provider, redirectUri)
+      res.redirect(authorizationUrl)
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Get('oauth/:provider/callback')
+  async oauthCallback(
+    @Param('provider') provider: string,
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    try {
+      const baseUrl = this.options.baseUrl ?? ''
+      const redirectUri = `${baseUrl}/auth/oauth/${provider}/callback`
+      const { user, token, refreshToken } = await this.auth.oauthCallback(provider, {
+        code: code ?? '',
+        state: state ?? '',
+        redirectUri,
+      })
+      if (this.useCookies) {
+        this.setAuthCookies(res, token, refreshToken)
+        res.redirect(this.options.oauthSuccessRedirect ?? '/')
+      } else if (this.options.oauthSuccessRedirect) {
+        const params = new URLSearchParams({ token, refreshToken })
+        res.redirect(`${this.options.oauthSuccessRedirect}#${params.toString()}`)
+      } else {
+        res.json({ user, token, refreshToken })
+      }
     } catch (err) {
       throw toHttpException(err)
     }

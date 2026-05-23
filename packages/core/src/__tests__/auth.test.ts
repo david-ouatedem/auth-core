@@ -30,7 +30,57 @@ function makeMockDb(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
     deleteToken: vi.fn().mockResolvedValue(undefined),
     deleteExpiredTokens: vi.fn().mockResolvedValue(undefined),
     deleteTokensByUserAndType: vi.fn().mockResolvedValue(undefined),
+    findOAuthAccount: vi.fn().mockResolvedValue(null),
+    createOAuthAccount: vi.fn().mockImplementation(async (data) => ({
+      id: 'oauth-1',
+      userId: data.userId,
+      provider: data.provider,
+      providerAccountId: data.providerAccountId,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken ?? null,
+      expiresAt: data.expiresAt ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })),
+    updateOAuthAccount: vi.fn().mockImplementation(async (id, data) => ({
+      id,
+      userId: 'user-1',
+      provider: 'google',
+      providerAccountId: 'remote-1',
+      accessToken: data.accessToken ?? 'access',
+      refreshToken: data.refreshToken ?? null,
+      expiresAt: data.expiresAt ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })),
     ...overrides,
+  }
+}
+
+function makeFakeProvider(overrides: {
+  id?: string
+  exchangeCode?: (params: { code: string; codeVerifier: string; redirectUri: string }) => Promise<{
+    accessToken: string
+    refreshToken?: string
+    expiresIn?: number
+    idToken?: string
+  }>
+  getUserInfo?: (
+    accessToken: string,
+    idToken?: string,
+  ) => Promise<{ id: string; email: string; emailVerified: boolean; name?: string; picture?: string }>
+} = {}) {
+  return {
+    id: overrides.id ?? 'google',
+    scopes: ['openid', 'email', 'profile'],
+    authorize: ({ state, codeChallenge, redirectUri }: { state: string; codeChallenge: string; redirectUri: string }) =>
+      `https://provider.example/authorize?state=${state}&challenge=${codeChallenge}&redirect=${encodeURIComponent(redirectUri)}`,
+    exchangeCode:
+      overrides.exchangeCode ??
+      (async () => ({ accessToken: 'remote-access', refreshToken: 'remote-refresh', expiresIn: 3600 })),
+    getUserInfo:
+      overrides.getUserInfo ??
+      (async () => ({ id: 'remote-1', email: 'remote@example.com', emailVerified: true, name: 'Remote User' })),
   }
 }
 
@@ -989,5 +1039,213 @@ describe('generateCsrfToken', () => {
     expect(a).toMatch(/^[a-f0-9]{64}$/)
     expect(b).toMatch(/^[a-f0-9]{64}$/)
     expect(a).not.toBe(b)
+  })
+})
+
+// ---- 0.11: OAuth ----
+
+const REDIRECT_URI = 'https://app.example/auth/oauth/google/callback'
+
+describe('createAuth().oauthStart', () => {
+  it('throws OAUTH_PROVIDER_UNKNOWN when no provider is registered under that id', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.oauthStart('google', REDIRECT_URI)).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'OAUTH_PROVIDER_UNKNOWN',
+    })
+  })
+
+  it('returns the provider authorization URL and an opaque state', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { authorizationUrl, state } = await auth.oauthStart('google', REDIRECT_URI)
+    expect(authorizationUrl).toContain('https://provider.example/authorize')
+    expect(authorizationUrl).toContain(`state=${encodeURIComponent(state)}`)
+    expect(state).toMatch(/\./) // base64url(payload) + '.' + base64url(sig)
+  })
+})
+
+describe('createAuth().oauthCallback', () => {
+  it('rejects an unsigned/forged state (invalid HMAC)', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state: 'forged.signature', redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 401, code: 'INVALID_TOKEN' })
+  })
+
+  it('rejects a state whose redirectUri does not match the callback URI', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: 'https://evil.example/cb' }),
+    ).rejects.toMatchObject({ statusCode: 401 })
+  })
+
+  it('creates a brand-new user when no OAuthAccount and no local user exists', async () => {
+    const provider = makeFakeProvider()
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser: vi.fn().mockResolvedValue(
+        makeUser({ id: 'user-new', email: 'remote@example.com', emailVerified: false }),
+      ),
+      updateUser: vi.fn().mockImplementation(async (id, data) => ({
+        ...makeUser({ id, email: 'remote@example.com' }),
+        ...data,
+      })),
+    })
+    const onSignUp = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+      callbacks: { onSignUp },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(true)
+    expect(result.user.email).toBe('remote@example.com')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+    expect(db.createUser).toHaveBeenCalledOnce()
+    expect(db.createOAuthAccount).toHaveBeenCalledOnce()
+    expect(onSignUp).toHaveBeenCalledOnce()
+  })
+
+  it('links to an existing local user with verified email', async () => {
+    const provider = makeFakeProvider()
+    const existing = makeUser({
+      id: 'user-existing',
+      email: 'remote@example.com',
+      emailVerified: true,
+    })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(existing),
+    })
+    const onSignIn = vi.fn()
+    const onSignUp = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+      callbacks: { onSignIn, onSignUp },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(false)
+    expect(result.user.id).toBe('user-existing')
+    expect(db.createUser).not.toHaveBeenCalled()
+    expect(db.createOAuthAccount).toHaveBeenCalledOnce()
+    expect(onSignIn).toHaveBeenCalledOnce()
+    expect(onSignUp).not.toHaveBeenCalled()
+  })
+
+  it('refuses to link an existing local user when provider has not verified the email', async () => {
+    const provider = makeFakeProvider({
+      getUserInfo: async () => ({ id: 'remote-1', email: 'existing@example.com', emailVerified: false }),
+    })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ email: 'existing@example.com' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'EMAIL_NOT_VERIFIED_BY_PROVIDER' })
+    expect(db.createOAuthAccount).not.toHaveBeenCalled()
+  })
+
+  it('loads the linked user when an OAuthAccount already exists, no new account row created', async () => {
+    const provider = makeFakeProvider()
+    const existing = makeUser({ id: 'user-linked', email: 'remote@example.com', emailVerified: true })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue({
+        id: 'oauth-existing',
+        userId: 'user-linked',
+        provider: 'google',
+        providerAccountId: 'remote-1',
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        expiresAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      findUserById: vi.fn().mockResolvedValue(existing),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(false)
+    expect(result.user.id).toBe('user-linked')
+    expect(db.createOAuthAccount).not.toHaveBeenCalled()
+    expect(db.updateOAuthAccount).toHaveBeenCalledOnce()
+  })
+
+  it('wraps provider exchangeCode failures as OAUTH_EXCHANGE_FAILED (502)', async () => {
+    const provider = makeFakeProvider({
+      exchangeCode: async () => {
+        throw new Error('upstream 500')
+      },
+    })
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 502, code: 'OAUTH_EXCHANGE_FAILED' })
+  })
+
+  it('wraps provider getUserInfo failures as OAUTH_USERINFO_FAILED (502)', async () => {
+    const provider = makeFakeProvider({
+      getUserInfo: async () => {
+        throw new Error('userinfo 500')
+      },
+    })
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 502, code: 'OAUTH_USERINFO_FAILED' })
   })
 })

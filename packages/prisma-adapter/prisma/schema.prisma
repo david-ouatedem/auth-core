@@ -12,14 +12,33 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
+  id            String         @id @default(uuid())
+  email         String         @unique
   passwordHash  String
-  emailVerified Boolean  @default(false)
-  role          String   @default("user")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  emailVerified Boolean        @default(false)
+  role          String         @default("user")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   tokens        Token[]
+  oauthAccounts OAuthAccount[]
+}
+
+model OAuthAccount {
+  id                String    @id @default(uuid())
+  userId            String
+  /// Stable provider id, e.g. "google", "github".
+  provider          String
+  /// The user's identifier at the provider (Google's `sub`, GitHub's numeric id, etc.).
+  providerAccountId String
+  accessToken       String
+  refreshToken      String?
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Token {
@@ -40,4 +59,5 @@ enum TokenType {
   PASSWORD_RESET
   SESSION
   INVITATION
+  REFRESH
 }

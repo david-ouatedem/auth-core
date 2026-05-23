@@ -45,6 +45,9 @@ export {
   defaultResetPasswordTemplate,
   defaultInvitationTemplate,
 } from './features/templates.js'
+export { startOAuth, completeOAuth } from './features/oauth.js'
+export { createGoogleProvider } from './oauth/google.js'
+export type { GoogleProviderConfig } from './oauth/google.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'

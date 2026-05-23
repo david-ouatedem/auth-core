@@ -72,6 +72,8 @@ describeIf('@authcore/fastify integration', () => {
 
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -295,6 +297,8 @@ describeIf('@authcore/fastify integration', () => {
 describeIf('@authcore/fastify — extended flows', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -508,6 +512,8 @@ describeIf('@authcore/fastify — extended flows', () => {
 describeIf('@authcore/fastify — refresh tokens', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -604,6 +610,8 @@ describeIf('@authcore/fastify — refresh tokens', () => {
 describeIf('@authcore/fastify — CSRF (opt-in)', () => {
   beforeEach(async () => {
     await prisma.token.deleteMany()
+    const oauthDelegate = (prisma as unknown as { oAuthAccount?: { deleteMany: () => Promise<unknown> } }).oAuthAccount
+    if (oauthDelegate?.deleteMany) await oauthDelegate.deleteMany()
     await prisma.user.deleteMany()
   })
 
@@ -719,5 +727,82 @@ describeIf('@authcore/fastify — CSRF (opt-in)', () => {
     })
     expect(meRes.statusCode).toBe(200)
     await csrfApp.close()
+  })
+})
+
+// ---- 0.11: OAuth ----
+
+function makeFakeFastifyProvider(opts: { email?: string; emailVerified?: boolean } = {}) {
+  const { email = 'oauth@example.com', emailVerified = true } = opts
+  return {
+    id: 'google',
+    scopes: ['openid', 'email', 'profile'],
+    authorize: ({ state, codeChallenge, redirectUri }: { state: string; codeChallenge: string; redirectUri: string }) =>
+      `https://provider.example/authorize?state=${state}&challenge=${codeChallenge}&redirect=${encodeURIComponent(redirectUri)}`,
+    exchangeCode: async () => ({ accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresIn: 3600 }),
+    getUserInfo: async () => ({ id: 'remote-1', email, emailVerified, name: 'Remote' }),
+  }
+}
+
+describeIf('@authcore/fastify OAuth (0.11)', () => {
+  it('GET /auth/oauth/google redirects to provider, callback completes flow (api mode)', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+      oauth: { google: makeFakeFastifyProvider({ email: 'fastify-oauth@example.com' }) },
+    })
+    const oauthApp = Fastify()
+    await oauthApp.register(cookie)
+    await oauthApp.register(auth.plugin({ baseUrl: 'http://localhost' }), { prefix: '/auth' })
+    await oauthApp.ready()
+
+    const startRes = await oauthApp.inject({ method: 'GET', url: '/auth/oauth/google' })
+    expect(startRes.statusCode).toBe(302)
+    const url = new URL(startRes.headers['location'] as string)
+    expect(url.host).toBe('provider.example')
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await oauthApp.inject({
+      method: 'GET',
+      url: `/auth/oauth/google/callback?code=remote-code&state=${encodeURIComponent(state)}`,
+    })
+    expect(cbRes.statusCode).toBe(200)
+    const body = cbRes.json()
+    expect(body.user.email).toBe('fastify-oauth@example.com')
+    expect(body.token).toBeTruthy()
+    expect(body.refreshToken).toBeTruthy()
+    await oauthApp.close()
+  })
+
+  it('cookie mode: callback sets 3 cookies and redirects', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+      oauth: { google: makeFakeFastifyProvider({ email: 'fastify-cookie-oauth@example.com' }) },
+    })
+    const oauthApp = Fastify()
+    await oauthApp.register(cookie)
+    await oauthApp.register(
+      auth.plugin({ baseUrl: 'http://localhost', useCookies: true, oauthSuccessRedirect: '/dashboard' }),
+      { prefix: '/auth' },
+    )
+    await oauthApp.ready()
+
+    const startRes = await oauthApp.inject({ method: 'GET', url: '/auth/oauth/google' })
+    const url = new URL(startRes.headers['location'] as string)
+    const state = url.searchParams.get('state')!
+
+    const cbRes = await oauthApp.inject({
+      method: 'GET',
+      url: `/auth/oauth/google/callback?code=remote-code&state=${encodeURIComponent(state)}`,
+    })
+    expect(cbRes.statusCode).toBe(302)
+    expect(cbRes.headers['location']).toBe('/dashboard')
+    const setCookieHeader = cbRes.headers['set-cookie']
+    const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader as string]
+    expect(cookies.some((c) => c.startsWith('authcore_token='))).toBe(true)
+    expect(cookies.some((c) => c.startsWith('authcore_token_refresh='))).toBe(true)
+    expect(cookies.some((c) => c.startsWith('authcore_token_csrf='))).toBe(true)
+    await oauthApp.close()
   })
 })

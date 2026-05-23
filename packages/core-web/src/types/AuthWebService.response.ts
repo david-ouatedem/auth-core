@@ -25,4 +25,24 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
   refresh(): Promise<AuthResponse<TUser>>
   /** Revoke the current refresh token on the server and clear local state. */
   revokeSession(): Promise<void>
+  /**
+   * Build the full OAuth start URL for a provider. The user must be navigated to
+   * this URL (full-page redirect) so the browser follows the provider's redirect chain.
+   */
+  oauthStartUrl(providerId: string): string
+  /**
+   * Convenience: navigate the current window to {@link oauthStartUrl}.
+   * No-op in non-browser environments.
+   */
+  signInWithProvider(providerId: string): void
+  /**
+   * Call this on your OAuth callback landing page (the URL the server redirects to
+   * after a successful OAuth flow). Populates auth state and clears any URL fragment
+   * the server included.
+   *
+   * - Cookie mode: cookies are already set; this fetches `/me`.
+   * - API mode: reads `#token=...&refreshToken=...` from the URL fragment (server must
+   *   be configured with `oauthSuccessRedirect` for this to work), then fetches `/me`.
+   */
+  handleOAuthCallback(): Promise<void>
 }

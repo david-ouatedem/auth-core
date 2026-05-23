@@ -246,6 +246,14 @@ const auth = createAuth({
     onSignUp: (user) => console.log('New user:', user.email),
     onSignIn: (user) => console.log('Signed in:', user.email),
   },
+
+  // OAuth providers (0.11+)
+  oauth: {
+    google: createGoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  },
 })
 ```
 
@@ -255,8 +263,8 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/register` | Create account, returns `{ user, token }` |
-| POST | `/login` | Sign in, returns `{ user, token }` |
+| POST | `/register` | Create account, returns `{ user, token, refreshToken }` |
+| POST | `/login` | Sign in, returns `{ user, token, refreshToken }` |
 | POST | `/logout` | Sign out |
 | GET | `/me` | Get current user (requires auth) |
 | POST | `/verify-email` | Verify email with token |
@@ -266,6 +274,8 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 | POST | `/accept-invitation` | Accept invitation, set password |
 | POST | `/refresh` | Rotate refresh token, get new JWT (0.10+) |
 | POST | `/revoke` | Revoke a refresh token, idempotent (0.10+) |
+| GET | `/oauth/:provider` | Begin OAuth flow (0.11+) |
+| GET | `/oauth/:provider/callback` | OAuth callback (0.11+) |
 
 ## RBAC
 
