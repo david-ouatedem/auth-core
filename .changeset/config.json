@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@authcore/types",
+      "@authcore/core",
+      "@authcore/core-web",
+      "@authcore/prisma-adapter",
+      "@authcore/resend-adapter",
+      "@authcore/nodemailer-adapter",
+      "@authcore/express",
+      "@authcore/fastify",
+      "@authcore/nestjs",
+      "@authcore/react",
+      "create-authcore-app"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": []
+}

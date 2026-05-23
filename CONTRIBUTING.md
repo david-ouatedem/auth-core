@@ -133,7 +133,19 @@ Follow the patterns already in the codebase:
 - Integration tests that need a database use the `describeIf(DATABASE_URL)` pattern to skip gracefully
 - Aim for meaningful coverage of new functionality
 
-### 5. Submit a pull request
+### 5. Add a changeset
+
+If your PR changes anything users will notice — a feature, a fix, an API change, a docs link in a package README — record it as a changeset:
+
+```bash
+pnpm changeset
+```
+
+Pick the affected packages, the bump type (`patch` / `minor` / `major`), and write a short user-facing description. A `.changeset/<slug>.md` file is written. **Commit it with the rest of your PR.**
+
+Skip the changeset only for changes invisible to users (CI tweaks, internal refactors with no API impact, formatting). The release workflow won't ship anything without a changeset, so don't be shy.
+
+### 6. Submit a pull request
 
 - Target the `develop` branch of the original repo
 - Fill in the PR template
@@ -141,6 +153,26 @@ Follow the patterns already in the codebase:
 - Make sure `pnpm build` and `pnpm test` pass locally before pushing
 - Push to your fork: `git push -u origin feat/your-feature`
 - Open a Pull Request from your branch on GitHub
+
+### How releases work
+
+Maintainers don't publish manually. The pipeline is:
+
+1. PRs merge into `main` carrying their changesets.
+2. The `Release` workflow notices pending changesets and opens a **"chore: version packages"** PR that bumps versions and writes CHANGELOG entries.
+3. Merging that PR triggers `pnpm changeset publish`, which pushes the new versions to npm and creates a GitHub Release.
+
+That's it. No tags by hand, no `npm publish` invocations.
+
+#### One-time maintainer setup
+
+To make the release workflow publish to npm:
+
+1. Generate an npm **Automation** token at <https://www.npmjs.com/settings/~/tokens> (the Automation type, not the default — Automation tokens bypass 2FA which is what CI needs).
+2. Add it as a repository secret named `NPM_TOKEN` (Repo → Settings → Secrets and variables → Actions → New repository secret).
+3. Make sure each publishable package's `package.json` has `"publishConfig": { "access": "public" }` (already set for AuthCore packages).
+
+The workflow uses GitHub OIDC for [npm provenance](https://docs.npmjs.com/generating-provenance-statements), which gives every published artifact a verifiable link back to the exact source commit and workflow run. No extra setup required — `id-token: write` is already granted in `release.yml`.
 
 ## Adding a New Database Adapter
 
