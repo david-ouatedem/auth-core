@@ -52,6 +52,8 @@ export { createGithubProvider } from './oauth/github.js'
 export type { GithubProviderConfig } from './oauth/github.js'
 export { createMicrosoftProvider } from './oauth/microsoft.js'
 export type { MicrosoftProviderConfig } from './oauth/microsoft.js'
+export { createDiscordProvider } from './oauth/discord.js'
+export type { DiscordProviderConfig } from './oauth/discord.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'

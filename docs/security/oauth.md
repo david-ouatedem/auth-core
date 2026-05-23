@@ -123,6 +123,25 @@ In **api mode**, set `oauthSuccessRedirect` on the server to a frontend URL. The
 
 Already documented above. Requires `clientId` + `clientSecret` from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Authorized redirect URI: `${baseUrl}/auth/oauth/google/callback`.
 
+### Discord
+
+```ts
+import { createDiscordProvider } from '@authcore/core'
+
+const discord = createDiscordProvider({
+  clientId: process.env.DISCORD_CLIENT_ID!,
+  clientSecret: process.env.DISCORD_CLIENT_SECRET!,
+  // scopes: ['identify', 'email'],  // optional; 'email' is required to read email
+})
+```
+
+**Configuration:** Create an app at <https://discord.com/developers/applications> → OAuth2. The **Redirect URI** must be exactly `${baseUrl}/auth/oauth/discord/callback`.
+
+**Notes:**
+- Discord exposes a `verified` flag on the user object; AuthCore threads it through to `emailVerified`. Unverified Discord accounts hit the standard `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409) gate when an existing local user has that email.
+- Avatar URLs are built from `id` + `avatar` hash (`https://cdn.discordapp.com/avatars/<id>/<hash>.png`).
+- Discord's display name comes from `global_name` (the new unified name), falling back to `username` for legacy accounts.
+
 ### Microsoft (Entra ID)
 
 ```ts
