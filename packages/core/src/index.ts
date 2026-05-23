@@ -54,6 +54,8 @@ export { createMicrosoftProvider } from './oauth/microsoft.js'
 export type { MicrosoftProviderConfig } from './oauth/microsoft.js'
 export { createDiscordProvider } from './oauth/discord.js'
 export type { DiscordProviderConfig } from './oauth/discord.js'
+export { createAppleProvider, generateAppleClientSecret } from './oauth/apple.js'
+export type { AppleProviderConfig } from './oauth/apple.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'

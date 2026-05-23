@@ -123,6 +123,35 @@ In **api mode**, set `oauthSuccessRedirect` on the server to a frontend URL. The
 
 Already documented above. Requires `clientId` + `clientSecret` from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Authorized redirect URI: `${baseUrl}/auth/oauth/google/callback`.
 
+### Apple (Sign in with Apple)
+
+Apple's protocol is the most particular of the bundled set. The `client_secret` is not a static string — it's an ES256-signed JWT minted on each token exchange, signed with a `.p8` private key from Apple Developer. AuthCore generates the JWT for you.
+
+```ts
+import { createAppleProvider } from '@authcore/core'
+
+const apple = createAppleProvider({
+  clientId: 'com.example.myapp.service',         // Apple Services ID
+  teamId: 'ABC1234DEF',                          // Apple Team ID
+  keyId: 'XYZ9876ABC',                           // Key ID from the .p8 file
+  privateKey: process.env.APPLE_PRIVATE_KEY!,    // contents of the .p8 (PEM)
+})
+```
+
+**Configuration:**
+
+1. In [Apple Developer → Identifiers](https://developer.apple.com/account/resources/identifiers/list), create a **Services ID** (e.g. `com.example.myapp.service`). Configure **Sign in with Apple** on it with your domain + return URL `${baseUrl}/auth/oauth/apple/callback`.
+2. In Apple Developer → Keys, **create a new key** with Sign in with Apple enabled. Download the `.p8` file once (Apple won't show it again).
+3. Note the **Team ID** (top-right of the Developer portal) and the **Key ID** (shown after creating the key).
+4. Store the `.p8` contents in `APPLE_PRIVATE_KEY` — full PEM including `-----BEGIN PRIVATE KEY-----` / `-----END PRIVATE KEY-----`.
+
+**Notes:**
+- AuthCore uses `response_mode=query` so the existing AuthCore callback (GET) handles Apple's response — no body-parser changes needed.
+- Apple's `email_verified` may be returned as the string `"true"` or as a boolean — AuthCore normalizes both.
+- Apple users may sign in with [private relay emails](https://support.apple.com/en-us/HT210425) (`*@privaterelay.appleid.com`). These are real forwarding addresses; treat them like any other email.
+- The user's **name** is delivered only on the first sign-in, via a form field that AuthCore doesn't read in query mode. The sign-in still works — the AuthCore user is created with `name` unset and the user can edit later.
+- The client secret JWT has a 10-minute TTL by default (configurable via `clientSecretTtlSeconds`). A fresh JWT is minted on every exchange.
+
 ### Discord
 
 ```ts
