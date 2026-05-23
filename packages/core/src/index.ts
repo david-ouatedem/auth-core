@@ -9,8 +9,19 @@ export {
   safeCompareTokens,
   signJwt,
   verifyJwt,
+  signTwoFactorChallenge,
+  verifyTwoFactorChallenge,
 } from './utils/token.js'
-export type { JwtPayload } from './utils/token.js'
+export type { JwtPayload, TwoFactorChallengePayload } from './utils/token.js'
+export {
+  base32Encode,
+  base32Decode,
+  generateTotpSecret,
+  generateTotpCode,
+  verifyTotpCode,
+  buildOtpauthUrl,
+  generateRecoveryCodes,
+} from './utils/totp.js'
 export {
   registerSchema,
   loginSchema,
@@ -55,6 +66,13 @@ export {
   consumeMagicLink,
   MAGIC_LINK_NO_PASSWORD_SENTINEL,
 } from './features/magicLink.js'
+export {
+  setupTwoFactor,
+  enableTwoFactor,
+  disableTwoFactor,
+  verifyTwoFactor,
+  useRecoveryCode,
+} from './features/twoFactor.js'
 export { startOAuth, completeOAuth } from './features/oauth.js'
 export { createGoogleProvider } from './oauth/google.js'
 export type { GoogleProviderConfig } from './oauth/google.js'
@@ -69,6 +87,11 @@ export type { AppleProviderConfig } from './oauth/apple.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'
-export type { AuthCore } from './auth.js'
+export type {
+  AuthCore,
+  SessionResult,
+  TwoFactorChallengeResult,
+  LoginResult,
+} from './auth.js'
 
 export * from '@authcore/types'

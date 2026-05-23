@@ -21,7 +21,8 @@ function toCoreTokenType(type: string): TokenType {
     type === 'SESSION' ||
     type === 'INVITATION' ||
     type === 'REFRESH' ||
-    type === 'MAGIC_LINK'
+    type === 'MAGIC_LINK' ||
+    type === 'RECOVERY_CODE'
   ) {
     return type
   }
@@ -37,6 +38,8 @@ function mapUser(prismaUser: {
   passwordHash: string
   emailVerified: boolean
   role: string
+  twoFactorEnabled: boolean
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }): User {
@@ -46,6 +49,8 @@ function mapUser(prismaUser: {
     passwordHash: prismaUser.passwordHash,
     emailVerified: prismaUser.emailVerified,
     role: prismaUser.role,
+    twoFactorEnabled: prismaUser.twoFactorEnabled,
+    twoFactorSecret: prismaUser.twoFactorSecret,
     createdAt: prismaUser.createdAt,
     updatedAt: prismaUser.updatedAt,
   }
@@ -114,6 +119,8 @@ interface PrismaUserRecord {
   passwordHash: string
   emailVerified: boolean
   role: string
+  twoFactorEnabled: boolean
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -129,6 +136,8 @@ interface PrismaClientLike {
         passwordHash: string
         emailVerified: boolean
         role: string
+        twoFactorEnabled: boolean
+        twoFactorSecret: string | null
         updatedAt: Date
       }>
     }): Promise<PrismaUserRecord>
@@ -247,6 +256,8 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
           ...(data.passwordHash !== undefined ? { passwordHash: data.passwordHash } : {}),
           ...(data.emailVerified !== undefined ? { emailVerified: data.emailVerified } : {}),
           ...(data.role !== undefined ? { role: data.role } : {}),
+          ...(data.twoFactorEnabled !== undefined ? { twoFactorEnabled: data.twoFactorEnabled } : {}),
+          ...(data.twoFactorSecret !== undefined ? { twoFactorSecret: data.twoFactorSecret } : {}),
         },
       })
       return mapUser(user)

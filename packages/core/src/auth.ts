@@ -1,6 +1,6 @@
 import type { AuthCoreConfig, PublicUser } from '@authcore/types'
 import { hashPassword, verifyPassword } from './utils/password.js'
-import { signJwt, verifyJwt } from './utils/token.js'
+import { signJwt, verifyJwt, signTwoFactorChallenge, verifyTwoFactorChallenge } from './utils/token.js'
 import {
   registerSchema,
   loginSchema,
@@ -28,6 +28,13 @@ import {
 } from './features/refresh.js'
 import { startOAuth, completeOAuth } from './features/oauth.js'
 import { sendMagicLink as sendMagicLinkFeature, consumeMagicLink as consumeMagicLinkFeature } from './features/magicLink.js'
+import {
+  setupTwoFactor as setupTwoFactorFeature,
+  enableTwoFactor as enableTwoFactorFeature,
+  disableTwoFactor as disableTwoFactorFeature,
+  verifyTwoFactor as verifyTwoFactorFeature,
+  useRecoveryCode as useRecoveryCodeFeature,
+} from './features/twoFactor.js'
 import {
   inviteSchema,
   acceptInvitationSchema,
@@ -59,22 +66,46 @@ export class AuthError extends Error {
   }
 }
 
+/** Successful authentication — full session minted. */
+export interface SessionResult {
+  user: PublicUser
+  token: string
+  refreshToken: string
+}
+
+/** First-factor passed, awaiting TOTP / recovery code. */
+export interface TwoFactorChallengeResult {
+  requires2FA: true
+  /** Short-lived JWT (5 min default) to pass back to `verifyTwoFactor` / `useRecoveryCode`. */
+  challengeToken: string
+}
+
+/** Login result is either a full session or a 2FA challenge. */
+export type LoginResult = SessionResult | TwoFactorChallengeResult
+
 /**
  * The AuthCore instance returned by createAuth.
- * Framework adapters (Express, Fastify) wrap this object.
+ * Framework adapters (Express, Fastify, NestJS, Next.js) wrap this object.
  */
 export interface AuthCore {
   /**
    * Register a new user.
    * @throws AuthError on validation failure (400) or duplicate email (409)
    */
-  register(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+  register(input: unknown): Promise<SessionResult>
 
   /**
    * Authenticate a user with email/password.
+   *
+   * Returns a discriminated union — narrow on `'requires2FA' in result`:
+   * - **Session**: `{ user, token, refreshToken }` when 2FA is off for that user.
+   * - **Challenge**: `{ requires2FA: true, challengeToken }` when 2FA is on. Pass
+   *   the `challengeToken` to {@link verifyTwoFactor} or {@link useRecoveryCode}
+   *   along with the user's code to complete the login.
+   *
    * @throws AuthError on invalid credentials (401)
    */
-  login(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+  login(input: unknown): Promise<LoginResult>
 
   /**
    * Verify a JWT and return the public user.
@@ -123,14 +154,14 @@ export interface AuthCore {
    * Accept an invitation by setting a password.
    * @throws AuthError if token is invalid or expired (400)
    */
-  acceptInvitation(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+  acceptInvitation(input: unknown): Promise<SessionResult>
 
   /**
    * Exchange a refresh token for a new JWT + a freshly rotated refresh token.
    * The old refresh token is invalidated atomically.
    * @throws AuthError(401, 'INVALID_TOKEN') if the refresh token is missing, invalid, or expired
    */
-  refresh(rawRefreshToken: string): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+  refresh(rawRefreshToken: string): Promise<SessionResult>
 
   /**
    * Revoke a single refresh token. Idempotent — succeeds even if the token doesn't exist.
@@ -182,7 +213,60 @@ export interface AuthCore {
   oauthCallback(
     providerId: string,
     params: { code: string; state: string; redirectUri: string },
-  ): Promise<{ user: PublicUser; token: string; refreshToken: string; isNewUser: boolean }>
+  ): Promise<SessionResult & { isNewUser: boolean }>
+
+  /**
+   * Begin 2FA enrollment. Returns the new TOTP secret, an `otpauth://` URL
+   * suitable for QR rendering, and 10 single-use recovery codes the user
+   * MUST store. Calls this method overwrite any prior unconfirmed setup.
+   *
+   * The secret is persisted on the user with `twoFactorEnabled` still
+   * `false` — call {@link enableTwoFactor} with the first generated code to
+   * flip the flag.
+   *
+   * @throws AuthError(404, 'USER_NOT_FOUND') if the user does not exist.
+   */
+  setupTwoFactor(userId: string): Promise<{
+    secret: string
+    otpauthUrl: string
+    recoveryCodes: string[]
+  }>
+
+  /**
+   * Confirm 2FA enrollment by verifying the first authenticator code.
+   * @throws AuthError(400, 'TWO_FACTOR_NOT_SET_UP') if setup hasn't run.
+   * @throws AuthError(400, 'INVALID_TWO_FACTOR_CODE') on a wrong code.
+   */
+  enableTwoFactor(userId: string, code: string): Promise<void>
+
+  /**
+   * Disable 2FA for the user. Requires the user's current password as a
+   * confirmation step (prevents an attacker with a stolen session cookie from
+   * silently turning off 2FA).
+   *
+   * @throws AuthError(401, 'INVALID_CREDENTIALS') if the password is wrong.
+   * @throws AuthError(404, 'USER_NOT_FOUND') if the user does not exist.
+   */
+  disableTwoFactor(userId: string, password: string): Promise<void>
+
+  /**
+   * Complete a 2FA-pending login. Pass the `challengeToken` from {@link login}
+   * along with the user's current TOTP code.
+   *
+   * @throws AuthError(401, 'INVALID_TOKEN') if the challenge JWT is invalid or expired.
+   * @throws AuthError(401, 'INVALID_TWO_FACTOR_CODE') if the TOTP code is wrong.
+   */
+  verifyTwoFactor(challengeToken: string, code: string): Promise<SessionResult>
+
+  /**
+   * Complete a 2FA-pending login using a single-use recovery code. Same
+   * challenge flow as {@link verifyTwoFactor}; the matching recovery code is
+   * deleted before the session is returned.
+   *
+   * @throws AuthError(401, 'INVALID_TOKEN') if the challenge JWT is invalid or expired.
+   * @throws AuthError(401, 'INVALID_RECOVERY_CODE') if the code is unknown.
+   */
+  useRecoveryCode(challengeToken: string, code: string): Promise<SessionResult>
 
   /** The resolved configuration this instance was created with. */
   readonly config: AuthCoreConfig
@@ -193,6 +277,7 @@ function toPublicUser(user: {
   email: string
   emailVerified: boolean
   role: string
+  twoFactorEnabled: boolean
   createdAt: Date
   updatedAt: Date
   passwordHash: string
@@ -202,6 +287,7 @@ function toPublicUser(user: {
     email: user.email,
     emailVerified: user.emailVerified,
     role: user.role,
+    twoFactorEnabled: user.twoFactorEnabled,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   }
@@ -297,6 +383,14 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
           'EMAIL_NOT_VERIFIED',
           403,
         )
+      }
+
+      // 2FA gate: if enabled for this user, short-circuit before minting a session.
+      // The caller receives a challenge token that they pass back to
+      // verifyTwoFactor / useRecoveryCode along with the user's code.
+      if (user.twoFactorEnabled) {
+        const challengeToken = signTwoFactorChallenge(user.id, session.secret)
+        return { requires2FA: true, challengeToken }
       }
 
       const publicUser = toPublicUser(user)
@@ -571,7 +665,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
         throw new AuthError('Token is required', 'INVALID_TOKEN', 400)
       }
 
-      let consumed: { user: { id: string; email: string; emailVerified: boolean; role: string; createdAt: Date; updatedAt: Date; passwordHash: string } }
+      let consumed: Awaited<ReturnType<typeof consumeMagicLinkFeature>>
       try {
         consumed = await consumeMagicLinkFeature({ rawToken: parsed.data.token, db })
       } catch (err) {
@@ -649,6 +743,105 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
       }
 
       return { user: publicUser, token, refreshToken, isNewUser }
+    },
+
+    async setupTwoFactor(userId) {
+      const user = await db.findUserById(userId)
+      if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+      const issuer = config.appName ?? 'AuthCore'
+      return setupTwoFactorFeature({ userId, email: user.email, issuer, db })
+    },
+
+    async enableTwoFactor(userId, code) {
+      try {
+        await enableTwoFactorFeature({ userId, code, db })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to enable 2FA'
+        if (message === 'USER_NOT_FOUND') {
+          throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+        }
+        if (message === 'TWO_FACTOR_NOT_SET_UP') {
+          throw new AuthError('2FA has not been set up — call setupTwoFactor first', message, 400)
+        }
+        if (message === 'INVALID_TWO_FACTOR_CODE') {
+          throw new AuthError('Invalid authenticator code', message, 400)
+        }
+        throw err
+      }
+    },
+
+    async disableTwoFactor(userId, password) {
+      const user = await db.findUserById(userId)
+      if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+      const valid = await verifyPassword(password, user.passwordHash)
+      if (!valid) {
+        throw new AuthError('Invalid password', 'INVALID_CREDENTIALS', 401)
+      }
+      await disableTwoFactorFeature({ userId, db })
+    },
+
+    async verifyTwoFactor(challengeToken, code) {
+      const payload = verifyTwoFactorChallenge(challengeToken, session.secret)
+      if (!payload) {
+        throw new AuthError('Invalid or expired 2FA challenge', 'INVALID_TOKEN', 401)
+      }
+      let user
+      try {
+        user = await verifyTwoFactorFeature({ userId: payload.sub, code, db })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to verify 2FA code'
+        if (message === 'INVALID_TWO_FACTOR_CODE') {
+          throw new AuthError('Invalid authenticator code', message, 401)
+        }
+        if (message === 'TWO_FACTOR_NOT_ENABLED') {
+          throw new AuthError('2FA is not enabled for this user', message, 400)
+        }
+        if (message === 'USER_NOT_FOUND') {
+          throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+        }
+        throw err
+      }
+      const publicUser = toPublicUser(user)
+      const token = signJwt(
+        { sub: user.id, email: user.email, role: user.role },
+        session.secret,
+        expiresIn,
+      )
+      const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
+      await callbacks.onSignIn?.(publicUser)
+      return { user: publicUser, token, refreshToken }
+    },
+
+    async useRecoveryCode(challengeToken, code) {
+      const payload = verifyTwoFactorChallenge(challengeToken, session.secret)
+      if (!payload) {
+        throw new AuthError('Invalid or expired 2FA challenge', 'INVALID_TOKEN', 401)
+      }
+      let user
+      try {
+        user = await useRecoveryCodeFeature({ userId: payload.sub, rawCode: code, db })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to use recovery code'
+        if (message === 'INVALID_RECOVERY_CODE') {
+          throw new AuthError('Invalid recovery code', message, 401)
+        }
+        if (message === 'TWO_FACTOR_NOT_ENABLED') {
+          throw new AuthError('2FA is not enabled for this user', message, 400)
+        }
+        if (message === 'USER_NOT_FOUND') {
+          throw new AuthError('User not found', 'USER_NOT_FOUND', 404)
+        }
+        throw err
+      }
+      const publicUser = toPublicUser(user)
+      const token = signJwt(
+        { sub: user.id, email: user.email, role: user.role },
+        session.secret,
+        expiresIn,
+      )
+      const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
+      await callbacks.onSignIn?.(publicUser)
+      return { user: publicUser, token, refreshToken }
     },
 
     config,

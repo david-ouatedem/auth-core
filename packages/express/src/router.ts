@@ -27,6 +27,16 @@ export interface RouterConfig {
     sendMagicLink?: string
     /** Magic-link consume route (GET). Default: '/magic-link/consume'. */
     consumeMagicLink?: string
+    /** 2FA setup (authed POST). Default: '/2fa/setup'. */
+    setupTwoFactor?: string
+    /** 2FA enable confirmation (authed POST). Default: '/2fa/enable'. */
+    enableTwoFactor?: string
+    /** 2FA disable (authed POST, requires password). Default: '/2fa/disable'. */
+    disableTwoFactor?: string
+    /** 2FA verify TOTP code (public POST). Default: '/2fa/verify'. */
+    verifyTwoFactor?: string
+    /** 2FA recovery-code use (public POST). Default: '/2fa/recovery'. */
+    useRecoveryCode?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
@@ -90,6 +100,11 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
     sendMagicLink: routePaths.sendMagicLink ?? '/magic-link',
     consumeMagicLink: routePaths.consumeMagicLink ?? '/magic-link/consume',
+    setupTwoFactor: routePaths.setupTwoFactor ?? '/2fa/setup',
+    enableTwoFactor: routePaths.enableTwoFactor ?? '/2fa/enable',
+    disableTwoFactor: routePaths.disableTwoFactor ?? '/2fa/disable',
+    verifyTwoFactor: routePaths.verifyTwoFactor ?? '/2fa/verify',
+    useRecoveryCode: routePaths.useRecoveryCode ?? '/2fa/recovery',
   }
   const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
   const magicLinkSuccessRedirect = config.magicLinkSuccessRedirect ?? '/'
@@ -163,7 +178,12 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
   // POST /login
   router.post(paths.login, async (req, res) => {
     try {
-      const { user, token, refreshToken } = await auth.login(req.body)
+      const result = await auth.login(req.body)
+      if ('requires2FA' in result) {
+        res.json({ requires2FA: true, challengeToken: result.challengeToken })
+        return
+      }
+      const { user, token, refreshToken } = result
       if (useCookies) {
         setAuthCookies(res, token, refreshToken)
         res.json({ user })
@@ -310,6 +330,86 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
         res.redirect(`${magicLinkSuccessRedirect}#${params.toString()}`)
       } else {
         res.json({ user, token: jwt, refreshToken })
+      }
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /2fa/setup — authed; returns { secret, otpauthUrl, recoveryCodes }
+  router.post(paths.setupTwoFactor, middleware, async (req, res) => {
+    try {
+      const result = await auth.setupTwoFactor(req.user!.id)
+      res.json(result)
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /2fa/enable — authed; body { code }; confirms enrollment
+  router.post(paths.enableTwoFactor, middleware, async (req, res) => {
+    try {
+      const body = req.body as { code?: string }
+      if (!body?.code) {
+        res.status(400).json({ error: 'code is required', code: 'VALIDATION_ERROR' })
+        return
+      }
+      await auth.enableTwoFactor(req.user!.id, body.code)
+      res.json({ message: 'Two-factor authentication enabled' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /2fa/disable — authed; body { password }; requires re-auth
+  router.post(paths.disableTwoFactor, middleware, async (req, res) => {
+    try {
+      const body = req.body as { password?: string }
+      if (!body?.password) {
+        res.status(400).json({ error: 'password is required', code: 'VALIDATION_ERROR' })
+        return
+      }
+      await auth.disableTwoFactor(req.user!.id, body.password)
+      res.json({ message: 'Two-factor authentication disabled' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /2fa/verify — public; body { challengeToken, code }
+  router.post(paths.verifyTwoFactor, async (req, res) => {
+    try {
+      const body = req.body as { challengeToken?: string; code?: string }
+      if (!body?.challengeToken || !body?.code) {
+        res.status(400).json({ error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' })
+        return
+      }
+      const { user, token, refreshToken } = await auth.verifyTwoFactor(body.challengeToken, body.code)
+      if (useCookies) {
+        setAuthCookies(res, token, refreshToken)
+        res.json({ user })
+      } else {
+        res.json({ user, token, refreshToken })
+      }
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /2fa/recovery — public; body { challengeToken, code }
+  router.post(paths.useRecoveryCode, async (req, res) => {
+    try {
+      const body = req.body as { challengeToken?: string; code?: string }
+      if (!body?.challengeToken || !body?.code) {
+        res.status(400).json({ error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' })
+        return
+      }
+      const { user, token, refreshToken } = await auth.useRecoveryCode(body.challengeToken, body.code)
+      if (useCookies) {
+        setAuthCookies(res, token, refreshToken)
+        res.json({ user })
+      } else {
+        res.json({ user, token, refreshToken })
       }
     } catch (err) {
       handleError(res, err)

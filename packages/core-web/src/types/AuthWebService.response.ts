@@ -7,12 +7,30 @@ export interface AuthResponse<TUser extends PublicUser = PublicUser> {
   refreshToken?: string
 }
 
+/** Returned by `signIn` when the user has 2FA enabled — caller must complete the challenge. */
+export interface TwoFactorChallengeResponse {
+  requires2FA: true
+  challengeToken: string
+}
+
+/** Discriminated union returned by `signIn`. Narrow on `'requires2FA' in result`. */
+export type SignInResult<TUser extends PublicUser = PublicUser> =
+  | AuthResponse<TUser>
+  | TwoFactorChallengeResponse
+
+/** 2FA enrollment data returned by `setupTwoFactor`. Show recoveryCodes ONCE. */
+export interface TwoFactorSetupResult {
+  secret: string
+  otpauthUrl: string
+  recoveryCodes: string[]
+}
+
 export interface AuthWebServiceResponseInterface<TUser extends PublicUser = PublicUser> {
   getState(): AuthWebStateInterface<TUser>
   subscribe(listener: () => void): () => void
   notifyListeners(): void
 
-  signIn(params: { email: string; password: string }): Promise<AuthResponse<TUser>>
+  signIn(params: { email: string; password: string }): Promise<SignInResult<TUser>>
   signUp(params: { email: string; password: string }): Promise<AuthResponse<TUser>>
   signOut(): Promise<void>
   verifyEmail(token: string): Promise<void>
@@ -66,4 +84,18 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
    * In cookie mode after a server-side redirect, calls `/me`.
    */
   handleMagicLinkCallback(): Promise<void>
+  /**
+   * Begin 2FA enrollment (authed). Returns the TOTP secret, an `otpauth://`
+   * URL for QR rendering, and 10 single-use recovery codes the user MUST
+   * save somewhere safe — this is the only time they're shown.
+   */
+  setupTwoFactor(): Promise<TwoFactorSetupResult>
+  /** Confirm 2FA enrollment by verifying the first authenticator code. */
+  enableTwoFactor(code: string): Promise<void>
+  /** Disable 2FA. Requires the user's password as a confirmation step. */
+  disableTwoFactor(password: string): Promise<void>
+  /** Complete a 2FA-pending sign-in with a TOTP code. */
+  verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
+  /** Complete a 2FA-pending sign-in with a single-use recovery code. */
+  useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
 }

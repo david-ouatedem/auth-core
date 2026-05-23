@@ -33,6 +33,11 @@ interface ResolvedPaths {
   oauthCallback: string
   sendMagicLink: string
   consumeMagicLink: string
+  setupTwoFactor: string
+  enableTwoFactor: string
+  disableTwoFactor: string
+  verifyTwoFactor: string
+  useRecoveryCode: string
 }
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -90,6 +95,11 @@ export function createNextAuthHandler(
     oauthCallback: '/oauth/:provider/callback',
     sendMagicLink: '/magic-link',
     consumeMagicLink: '/magic-link/consume',
+    setupTwoFactor: '/2fa/setup',
+    enableTwoFactor: '/2fa/enable',
+    disableTwoFactor: '/2fa/disable',
+    verifyTwoFactor: '/2fa/verify',
+    useRecoveryCode: '/2fa/recovery',
   }
 
   async function dispatch(request: Request): Promise<Response> {
@@ -123,8 +133,19 @@ export function createNextAuthHandler(
 
       if (request.method === 'POST' && relPath === paths.login) {
         const body = await readJson(request)
-        const { user, token, refreshToken } = await auth.login(body)
-        return sessionResponse({ user, token, refreshToken, status: 200 })
+        const result = await auth.login(body)
+        if ('requires2FA' in result) {
+          return json(
+            { requires2FA: true, challengeToken: result.challengeToken },
+            200,
+          )
+        }
+        return sessionResponse({
+          user: result.user,
+          token: result.token,
+          refreshToken: result.refreshToken,
+          status: 200,
+        })
       }
 
       if (request.method === 'POST' && relPath === paths.refresh) {
@@ -199,6 +220,66 @@ export function createNextAuthHandler(
       if (request.method === 'POST' && relPath === paths.acceptInvitation) {
         const body = await readJson(request)
         const { user, token, refreshToken } = await auth.acceptInvitation(body)
+        return sessionResponse({ user, token, refreshToken, status: 200 })
+      }
+
+      // --- 2FA ---
+      if (request.method === 'POST' && relPath === paths.setupTwoFactor) {
+        const user = await readUserFromRequest(request)
+        if (!user) return json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
+        const result = await auth.setupTwoFactor(user.id)
+        return json(result, 200)
+      }
+
+      if (request.method === 'POST' && relPath === paths.enableTwoFactor) {
+        const user = await readUserFromRequest(request)
+        if (!user) return json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
+        const body = (await readJson(request)) as { code?: string }
+        if (!body?.code) {
+          return json({ error: 'code is required', code: 'VALIDATION_ERROR' }, 400)
+        }
+        await auth.enableTwoFactor(user.id, body.code)
+        return json({ message: 'Two-factor authentication enabled' }, 200)
+      }
+
+      if (request.method === 'POST' && relPath === paths.disableTwoFactor) {
+        const user = await readUserFromRequest(request)
+        if (!user) return json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
+        const body = (await readJson(request)) as { password?: string }
+        if (!body?.password) {
+          return json({ error: 'password is required', code: 'VALIDATION_ERROR' }, 400)
+        }
+        await auth.disableTwoFactor(user.id, body.password)
+        return json({ message: 'Two-factor authentication disabled' }, 200)
+      }
+
+      if (request.method === 'POST' && relPath === paths.verifyTwoFactor) {
+        const body = (await readJson(request)) as { challengeToken?: string; code?: string }
+        if (!body?.challengeToken || !body?.code) {
+          return json(
+            { error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' },
+            400,
+          )
+        }
+        const { user, token, refreshToken } = await auth.verifyTwoFactor(
+          body.challengeToken,
+          body.code,
+        )
+        return sessionResponse({ user, token, refreshToken, status: 200 })
+      }
+
+      if (request.method === 'POST' && relPath === paths.useRecoveryCode) {
+        const body = (await readJson(request)) as { challengeToken?: string; code?: string }
+        if (!body?.challengeToken || !body?.code) {
+          return json(
+            { error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' },
+            400,
+          )
+        }
+        const { user, token, refreshToken } = await auth.useRecoveryCode(
+          body.challengeToken,
+          body.code,
+        )
         return sessionResponse({ user, token, refreshToken, status: 200 })
       }
 

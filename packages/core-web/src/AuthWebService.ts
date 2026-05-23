@@ -1,5 +1,10 @@
 import type { AuthWebRoutesInterface } from './types/AuthWebRoutes.interface.js'
-import type { AuthResponse, AuthWebServiceResponseInterface } from './types/AuthWebService.response.js'
+import type {
+  AuthResponse,
+  AuthWebServiceResponseInterface,
+  SignInResult,
+  TwoFactorSetupResult,
+} from './types/AuthWebService.response.js'
 import type { AuthWebStateInterface } from './types/AuthWebState.interface.js'
 import type { HttpClient } from './types/HttpClients.interface.js'
 import { createFetchAuthClient } from './http-client/createFetchAuthClient.js'
@@ -30,6 +35,11 @@ interface ResolvedRoutes {
   oauthStart: string
   sendMagicLink: string
   consumeMagicLink: string
+  setupTwoFactor: string
+  enableTwoFactor: string
+  disableTwoFactor: string
+  verifyTwoFactor: string
+  useRecoveryCode: string
 }
 
 export class AuthWebService<TUser extends PublicUser = PublicUser>
@@ -81,20 +91,32 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       oauthStart: routes?.oauthStart ?? '/oauth/:provider',
       sendMagicLink: routes?.sendMagicLink ?? '/magic-link',
       consumeMagicLink: routes?.consumeMagicLink ?? '/magic-link/consume',
+      setupTwoFactor: routes?.setupTwoFactor ?? '/2fa/setup',
+      enableTwoFactor: routes?.enableTwoFactor ?? '/2fa/enable',
+      disableTwoFactor: routes?.disableTwoFactor ?? '/2fa/disable',
+      verifyTwoFactor: routes?.verifyTwoFactor ?? '/2fa/verify',
+      useRecoveryCode: routes?.useRecoveryCode ?? '/2fa/recovery',
     }
 
     this.listeners = new Set()
   }
 
-  async signIn({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {
+  async signIn({ email, password }: { email: string; password: string }): Promise<SignInResult<TUser>> {
     try {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
       const raw = await this.client.post<unknown>(this.paths.login, { email, password })
+
+      // 2FA challenge: server returns `{ requires2FA: true, challengeToken }`.
+      // Do NOT populate auth state — the user isn't signed in yet.
+      if (raw && typeof raw === 'object' && (raw as { requires2FA?: boolean }).requires2FA) {
+        return raw as { requires2FA: true; challengeToken: string }
+      }
+
       const response = this.transformers.transformAuthResponse
         ? this.transformers.transformAuthResponse(raw)
-        : raw as AuthResponse<TUser>
+        : (raw as AuthResponse<TUser>)
       this.state = {
         ...this.state,
         user: response.user,
@@ -114,6 +136,55 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       this.state = { ...this.state, isLoading: false }
       this.notifyListeners()
     }
+  }
+
+  async setupTwoFactor(): Promise<TwoFactorSetupResult> {
+    return this.client.post<TwoFactorSetupResult>(this.paths.setupTwoFactor, {})
+  }
+
+  async enableTwoFactor(code: string): Promise<void> {
+    await this.client.post(this.paths.enableTwoFactor, { code })
+  }
+
+  async disableTwoFactor(password: string): Promise<void> {
+    await this.client.post(this.paths.disableTwoFactor, { password })
+  }
+
+  async verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>> {
+    const raw = await this.client.post<unknown>(this.paths.verifyTwoFactor, {
+      challengeToken,
+      code,
+    })
+    return this.applySessionResponse(raw)
+  }
+
+  async useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>> {
+    const raw = await this.client.post<unknown>(this.paths.useRecoveryCode, {
+      challengeToken,
+      code,
+    })
+    return this.applySessionResponse(raw)
+  }
+
+  /**
+   * Shared helper: take a raw server response that we know is a full session
+   * (post-2FA verify or recovery), populate auth state, and return it.
+   */
+  private applySessionResponse(raw: unknown): AuthResponse<TUser> {
+    const response = this.transformers.transformAuthResponse
+      ? this.transformers.transformAuthResponse(raw)
+      : (raw as AuthResponse<TUser>)
+    this.state = {
+      ...this.state,
+      user: response.user,
+      token: response.token ?? '',
+      refreshToken: response.refreshToken ?? null,
+      isAuthenticated: true,
+    }
+    this.setToken(response.token ?? null)
+    this.setRefreshToken(response.refreshToken ?? null)
+    this.notifyListeners()
+    return response
   }
 
   async signUp({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {

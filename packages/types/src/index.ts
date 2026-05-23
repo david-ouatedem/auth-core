@@ -10,6 +10,7 @@ export type TokenType =
   | 'INVITATION'
   | 'REFRESH'
   | 'MAGIC_LINK'
+  | 'RECOVERY_CODE'
 
 /** A user record as stored in the database. */
 export interface User {
@@ -18,6 +19,17 @@ export interface User {
   passwordHash: string
   emailVerified: boolean
   role: string
+  /** Whether two-factor (TOTP) authentication is enabled for this user. */
+  twoFactorEnabled: boolean
+  /**
+   * Base32-encoded TOTP secret. Set at 2FA enrollment time (`setupTwoFactor`),
+   * cleared when 2FA is disabled. `null` for users who haven't enrolled.
+   *
+   * Never exposed in `PublicUser`. Stored in plaintext — encrypting only this
+   * column doesn't meaningfully help if the DB is compromised (passwords are
+   * hashed but everything else needs to be readable for the auth flow).
+   */
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -76,8 +88,8 @@ export interface CreateOAuthAccountInput {
   expiresAt?: Date | null
 }
 
-/** Safe user shape returned to callers (no passwordHash). */
-export type PublicUser = Omit<User, 'passwordHash'>
+/** Safe user shape returned to callers — strips `passwordHash` and `twoFactorSecret`. */
+export type PublicUser = Omit<User, 'passwordHash' | 'twoFactorSecret'>
 
 /** Configuration for the AuthCore session/JWT strategy. */
 export interface SessionConfig {
@@ -237,6 +249,13 @@ export interface AuthCoreConfig {
   rbac?: {
     defaultRole?: string
   }
+  /**
+   * Display name for your app, shown by authenticator apps when the user adds
+   * a 2FA secret (the "issuer" in the otpauth URL). Defaults to `'AuthCore'`.
+   * Set this to something like `'MyApp'` so users see your brand in their
+   * authenticator. Has no security implications.
+   */
+  appName?: string
   callbacks?: AuthCallbacks
   /**
    * Map of OAuth providers keyed by provider id (e.g. `{ google: createGoogleProvider({...}) }`).

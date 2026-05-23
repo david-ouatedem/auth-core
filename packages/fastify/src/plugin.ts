@@ -27,6 +27,16 @@ export interface PluginConfig {
     sendMagicLink?: string
     /** Magic-link consume route (GET). Default: '/magic-link/consume'. */
     consumeMagicLink?: string
+    /** 2FA setup (authed POST). Default: '/2fa/setup'. */
+    setupTwoFactor?: string
+    /** 2FA enable confirmation (authed POST). Default: '/2fa/enable'. */
+    enableTwoFactor?: string
+    /** 2FA disable (authed POST, requires password). Default: '/2fa/disable'. */
+    disableTwoFactor?: string
+    /** 2FA verify TOTP code (public POST). Default: '/2fa/verify'. */
+    verifyTwoFactor?: string
+    /** 2FA recovery-code use (public POST). Default: '/2fa/recovery'. */
+    useRecoveryCode?: string
   }
   /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
@@ -85,6 +95,11 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     oauthCallback: routePaths.oauthCallback ?? '/oauth/:provider/callback',
     sendMagicLink: routePaths.sendMagicLink ?? '/magic-link',
     consumeMagicLink: routePaths.consumeMagicLink ?? '/magic-link/consume',
+    setupTwoFactor: routePaths.setupTwoFactor ?? '/2fa/setup',
+    enableTwoFactor: routePaths.enableTwoFactor ?? '/2fa/enable',
+    disableTwoFactor: routePaths.disableTwoFactor ?? '/2fa/disable',
+    verifyTwoFactor: routePaths.verifyTwoFactor ?? '/2fa/verify',
+    useRecoveryCode: routePaths.useRecoveryCode ?? '/2fa/recovery',
   }
   const oauthSuccessRedirect = config.oauthSuccessRedirect ?? '/'
   const magicLinkSuccessRedirect = config.magicLinkSuccessRedirect ?? '/'
@@ -148,7 +163,11 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     // POST /login
     fastify.post(paths.login, async (request, reply) => {
       try {
-        const { user, token, refreshToken } = await auth.login(request.body)
+        const result = await auth.login(request.body)
+        if ('requires2FA' in result) {
+          return reply.send({ requires2FA: true, challengeToken: result.challengeToken })
+        }
+        const { user, token, refreshToken } = result
         if (useCookies) {
           setAuthCookies(reply, token, refreshToken)
           return reply.send({ user })
@@ -252,6 +271,80 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     fastify.post(paths.acceptInvitation, async (request, reply) => {
       try {
         const { user, token, refreshToken } = await auth.acceptInvitation(request.body)
+        if (useCookies) {
+          setAuthCookies(reply, token, refreshToken)
+          return reply.send({ user })
+        }
+        return reply.send({ user, token, refreshToken })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /2fa/setup — authed
+    fastify.post(paths.setupTwoFactor, { preHandler: [authRequired] }, async (request, reply) => {
+      try {
+        const result = await auth.setupTwoFactor(request.user!.id)
+        return reply.send(result)
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /2fa/enable — authed; body { code }
+    fastify.post(paths.enableTwoFactor, { preHandler: [authRequired] }, async (request, reply) => {
+      try {
+        const body = request.body as { code?: string }
+        if (!body?.code) {
+          return reply.code(400).send({ error: 'code is required', code: 'VALIDATION_ERROR' })
+        }
+        await auth.enableTwoFactor(request.user!.id, body.code)
+        return reply.send({ message: 'Two-factor authentication enabled' })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /2fa/disable — authed; body { password }
+    fastify.post(paths.disableTwoFactor, { preHandler: [authRequired] }, async (request, reply) => {
+      try {
+        const body = request.body as { password?: string }
+        if (!body?.password) {
+          return reply.code(400).send({ error: 'password is required', code: 'VALIDATION_ERROR' })
+        }
+        await auth.disableTwoFactor(request.user!.id, body.password)
+        return reply.send({ message: 'Two-factor authentication disabled' })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /2fa/verify — public; body { challengeToken, code }
+    fastify.post(paths.verifyTwoFactor, async (request, reply) => {
+      try {
+        const body = request.body as { challengeToken?: string; code?: string }
+        if (!body?.challengeToken || !body?.code) {
+          return reply.code(400).send({ error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' })
+        }
+        const { user, token, refreshToken } = await auth.verifyTwoFactor(body.challengeToken, body.code)
+        if (useCookies) {
+          setAuthCookies(reply, token, refreshToken)
+          return reply.send({ user })
+        }
+        return reply.send({ user, token, refreshToken })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /2fa/recovery — public; body { challengeToken, code }
+    fastify.post(paths.useRecoveryCode, async (request, reply) => {
+      try {
+        const body = request.body as { challengeToken?: string; code?: string }
+        if (!body?.challengeToken || !body?.code) {
+          return reply.code(400).send({ error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' })
+        }
+        const { user, token, refreshToken } = await auth.useRecoveryCode(body.challengeToken, body.code)
         if (useCookies) {
           setAuthCookies(reply, token, refreshToken)
           return reply.send({ user })

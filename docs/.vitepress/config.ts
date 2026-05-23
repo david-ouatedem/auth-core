@@ -45,6 +45,7 @@ export default defineConfig({
           { text: 'CSRF', link: '/security/csrf' },
           { text: 'OAuth', link: '/security/oauth' },
           { text: 'Magic-Link Login', link: '/security/magic-link' },
+          { text: 'Two-Factor (TOTP)', link: '/security/two-factor' },
           { text: 'Email Templates', link: '/security/email-templates' },
         ],
       },

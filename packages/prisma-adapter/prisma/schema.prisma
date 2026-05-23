@@ -12,15 +12,18 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  passwordHash  String
-  emailVerified Boolean        @default(false)
-  role          String         @default("user")
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  tokens        Token[]
-  oauthAccounts OAuthAccount[]
+  id               String         @id @default(uuid())
+  email            String         @unique
+  passwordHash     String
+  emailVerified    Boolean        @default(false)
+  role             String         @default("user")
+  twoFactorEnabled Boolean        @default(false)
+  /// Base32-encoded TOTP secret. NULL means 2FA is not enrolled.
+  twoFactorSecret  String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  tokens           Token[]
+  oauthAccounts    OAuthAccount[]
 }
 
 model OAuthAccount {
@@ -61,4 +64,5 @@ enum TokenType {
   INVITATION
   REFRESH
   MAGIC_LINK
+  RECOVERY_CODE
 }

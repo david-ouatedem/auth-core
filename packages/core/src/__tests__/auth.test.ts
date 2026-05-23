@@ -13,6 +13,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     passwordHash: '$2b$12$notrealhashbutenoughcharstopassvalidation...',
     emailVerified: false,
     role: 'user',
+    twoFactorEnabled: false,
+    twoFactorSecret: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -1483,6 +1485,332 @@ describe('createAuth().consumeMagicLink', () => {
     await auth.consumeMagicLink({ token: 'once' })
     await expect(auth.consumeMagicLink({ token: 'once' })).rejects.toMatchObject({
       code: 'INVALID_TOKEN',
+    })
+  })
+})
+
+// ---- 0.12: Two-factor authentication ----
+
+describe('createAuth() 2FA — setup + enable + disable', () => {
+  it('setupTwoFactor returns secret + otpauthUrl + 10 recovery codes, persists secret + token rows', async () => {
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const createToken = vi.fn().mockResolvedValue({} as Token)
+    const deleteTokensByUserAndType = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'u-1', email: 'me@example.com' })),
+      updateUser,
+      createToken,
+      deleteTokensByUserAndType,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      appName: 'MyApp',
+    })
+
+    const result = await auth.setupTwoFactor('u-1')
+
+    expect(result.secret).toMatch(/^[A-Z2-7]{32}$/)
+    expect(result.otpauthUrl).toContain('otpauth://totp/MyApp:me%40example.com')
+    expect(result.otpauthUrl).toContain(`secret=${result.secret}`)
+    expect(result.recoveryCodes).toHaveLength(10)
+    expect(updateUser).toHaveBeenCalledWith('u-1', { twoFactorSecret: result.secret })
+    // Old recovery codes wiped, then 10 new ones created
+    expect(deleteTokensByUserAndType).toHaveBeenCalledWith('u-1', 'RECOVERY_CODE')
+    expect(createToken).toHaveBeenCalledTimes(10)
+  })
+
+  it('setupTwoFactor throws USER_NOT_FOUND for an unknown user', async () => {
+    const auth = createAuth({
+      db: makeMockDb({ findUserById: vi.fn().mockResolvedValue(null) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.setupTwoFactor('nope')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'USER_NOT_FOUND',
+    })
+  })
+
+  it('enableTwoFactor verifies the code against the stored secret + flips the flag', async () => {
+    const { generateTotpSecret, generateTotpCode } = await import('../utils/totp.js')
+    const secret = generateTotpSecret()
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorSecret: secret })),
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await auth.enableTwoFactor('u-1', generateTotpCode(secret))
+    expect(updateUser).toHaveBeenCalledWith('u-1', { twoFactorEnabled: true })
+  })
+
+  it('enableTwoFactor rejects an INVALID_TWO_FACTOR_CODE', async () => {
+    const { generateTotpSecret } = await import('../utils/totp.js')
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(makeUser({ twoFactorSecret: generateTotpSecret() })),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.enableTwoFactor('u-1', '000000')).rejects.toMatchObject({
+      code: 'INVALID_TWO_FACTOR_CODE',
+    })
+  })
+
+  it('enableTwoFactor throws TWO_FACTOR_NOT_SET_UP when secret is null', async () => {
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(makeUser({ twoFactorSecret: null })),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.enableTwoFactor('u-1', '123456')).rejects.toMatchObject({
+      code: 'TWO_FACTOR_NOT_SET_UP',
+    })
+  })
+
+  it('disableTwoFactor verifies password and clears secret + flag + recovery codes', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('correct-horse', 4)
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const deleteTokensByUserAndType = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', passwordHash, twoFactorEnabled: true })),
+      updateUser,
+      deleteTokensByUserAndType,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await auth.disableTwoFactor('u-1', 'correct-horse')
+
+    expect(updateUser).toHaveBeenCalledWith('u-1', {
+      twoFactorEnabled: false,
+      twoFactorSecret: null,
+    })
+    expect(deleteTokensByUserAndType).toHaveBeenCalledWith('u-1', 'RECOVERY_CODE')
+  })
+
+  it('disableTwoFactor rejects an incorrect password with INVALID_CREDENTIALS', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('correct-horse', 4)
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(makeUser({ passwordHash, twoFactorEnabled: true })),
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await expect(auth.disableTwoFactor('u-1', 'wrong')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_CREDENTIALS',
+    })
+    expect(updateUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('createAuth() 2FA — login challenge + verify', () => {
+  it('login returns { requires2FA, challengeToken } when 2FA is on for that user', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('mypassword', 4)
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(
+        makeUser({
+          email: 'me@example.com',
+          passwordHash,
+          twoFactorEnabled: true,
+          twoFactorSecret: 'JBSWY3DPEHPK3PXP',
+        }),
+      ),
+    })
+    const onSignIn = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      callbacks: { onSignIn },
+    })
+
+    const result = await auth.login({ email: 'me@example.com', password: 'mypassword' })
+
+    expect('requires2FA' in result).toBe(true)
+    if ('requires2FA' in result) {
+      expect(result.requires2FA).toBe(true)
+      expect(result.challengeToken).toBeTruthy()
+    }
+    // No session minted yet → onSignIn should NOT fire
+    expect(onSignIn).not.toHaveBeenCalled()
+  })
+
+  it('login still returns a session when 2FA is disabled (regression check)', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('mypassword', 4)
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(
+        makeUser({ email: 'me@example.com', passwordHash, twoFactorEnabled: false }),
+      ),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    const result = await auth.login({ email: 'me@example.com', password: 'mypassword' })
+    expect('requires2FA' in result).toBe(false)
+  })
+
+  it('verifyTwoFactor exchanges a valid challenge + TOTP for a full session', async () => {
+    const { generateTotpSecret, generateTotpCode } = await import('../utils/totp.js')
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const secret = generateTotpSecret()
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const user = makeUser({
+      id: 'u-1',
+      email: 'me@example.com',
+      twoFactorEnabled: true,
+      twoFactorSecret: secret,
+    })
+    const auth = createAuth({
+      db: makeMockDb({ findUserById: vi.fn().mockResolvedValue(user) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    const result = await auth.verifyTwoFactor(challengeToken, generateTotpCode(secret))
+    expect(result.user.id).toBe('u-1')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+  })
+
+  it('verifyTwoFactor rejects a tampered challenge with INVALID_TOKEN', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor('not.a.real.jwt', '123456')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('verifyTwoFactor rejects a session JWT used as a challenge (scope check)', async () => {
+    const { signJwt } = await import('../utils/token.js')
+    const sessionJwt = signJwt(
+      { sub: 'u-1', email: 'me@example.com', role: 'user' },
+      TEST_SECRET,
+      '5m',
+    )
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor(sessionJwt, '123456')).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('verifyTwoFactor rejects an INVALID_TWO_FACTOR_CODE', async () => {
+    const { generateTotpSecret } = await import('../utils/totp.js')
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(
+          makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: generateTotpSecret() }),
+        ),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor(challengeToken, '000000')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TWO_FACTOR_CODE',
+    })
+  })
+})
+
+describe('createAuth() 2FA — recovery codes', () => {
+  it('useRecoveryCode accepts a valid code, deletes the token row, returns a session', async () => {
+    const { signTwoFactorChallenge, hashToken } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const rawCode = 'AAAA-BBBB-CCCC'
+    const tokenRecord = {
+      id: 'tok-1',
+      userId: 'u-1',
+      type: 'RECOVERY_CODE' as const,
+      token: hashToken(rawCode),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: 'X' })),
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    const result = await auth.useRecoveryCode(challengeToken, rawCode)
+    expect(result.user.id).toBe('u-1')
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+  })
+
+  it('useRecoveryCode refuses a recovery code that belongs to a DIFFERENT user', async () => {
+    const { signTwoFactorChallenge, hashToken } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('attacker', TEST_SECRET)
+    const tokenForVictim = {
+      id: 'tok-victim',
+      userId: 'victim',
+      type: 'RECOVERY_CODE' as const,
+      token: hashToken('XXXX-YYYY-ZZZZ'),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(
+        makeUser({ id: 'attacker', twoFactorEnabled: true, twoFactorSecret: 'X' }),
+      ),
+      findToken: vi.fn().mockResolvedValue(tokenForVictim),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await expect(auth.useRecoveryCode(challengeToken, 'XXXX-YYYY-ZZZZ')).rejects.toMatchObject({
+      code: 'INVALID_RECOVERY_CODE',
+    })
+  })
+
+  it('useRecoveryCode rejects an unknown code with INVALID_RECOVERY_CODE', async () => {
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: 'X' })),
+      findToken: vi.fn().mockResolvedValue(null),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.useRecoveryCode(challengeToken, 'nope')).rejects.toMatchObject({
+      code: 'INVALID_RECOVERY_CODE',
     })
   })
 })

@@ -111,7 +111,112 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
     try {
-      const { user, token, refreshToken } = await this.auth.login(body)
+      const result = await this.auth.login(body)
+      if ('requires2FA' in result) {
+        return { requires2FA: true, challengeToken: result.challengeToken }
+      }
+      const { user, token, refreshToken } = result
+      if (this.useCookies) {
+        this.setAuthCookies(res, token, refreshToken)
+        return { user }
+      }
+      return { user, token, refreshToken }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('2fa/setup')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async setupTwoFactor(@CurrentUser() user: PublicUser) {
+    try {
+      return await this.auth.setupTwoFactor(user.id)
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('2fa/enable')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async enableTwoFactor(
+    @CurrentUser() user: PublicUser,
+    @Body() body: { code?: string },
+  ) {
+    if (!body?.code) {
+      throw new HttpException({ error: 'code is required', code: 'VALIDATION_ERROR' }, 400)
+    }
+    try {
+      await this.auth.enableTwoFactor(user.id, body.code)
+      return { message: 'Two-factor authentication enabled' }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('2fa/disable')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async disableTwoFactor(
+    @CurrentUser() user: PublicUser,
+    @Body() body: { password?: string },
+  ) {
+    if (!body?.password) {
+      throw new HttpException({ error: 'password is required', code: 'VALIDATION_ERROR' }, 400)
+    }
+    try {
+      await this.auth.disableTwoFactor(user.id, body.password)
+      return { message: 'Two-factor authentication disabled' }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('2fa/verify')
+  @HttpCode(200)
+  async verifyTwoFactor(
+    @Body() body: { challengeToken?: string; code?: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body?.challengeToken || !body?.code) {
+      throw new HttpException(
+        { error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' },
+        400,
+      )
+    }
+    try {
+      const { user, token, refreshToken } = await this.auth.verifyTwoFactor(
+        body.challengeToken,
+        body.code,
+      )
+      if (this.useCookies) {
+        this.setAuthCookies(res, token, refreshToken)
+        return { user }
+      }
+      return { user, token, refreshToken }
+    } catch (err) {
+      throw toHttpException(err)
+    }
+  }
+
+  @Post('2fa/recovery')
+  @HttpCode(200)
+  async useRecoveryCode(
+    @Body() body: { challengeToken?: string; code?: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!body?.challengeToken || !body?.code) {
+      throw new HttpException(
+        { error: 'challengeToken and code are required', code: 'VALIDATION_ERROR' },
+        400,
+      )
+    }
+    try {
+      const { user, token, refreshToken } = await this.auth.useRecoveryCode(
+        body.challengeToken,
+        body.code,
+      )
       if (this.useCookies) {
         this.setAuthCookies(res, token, refreshToken)
         return { user }

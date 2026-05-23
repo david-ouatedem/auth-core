@@ -1,6 +1,12 @@
 import { createContext, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { AuthWebService } from '@authcore/core-web'
-import type { AuthWebRoutesInterface, AuthResponse, AuthResponseTransformers } from '@authcore/core-web'
+import type {
+  AuthWebRoutesInterface,
+  AuthResponse,
+  AuthResponseTransformers,
+  SignInResult,
+  TwoFactorSetupResult,
+} from '@authcore/core-web'
 import type { PublicUser } from '@authcore/types'
 
 export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
@@ -9,7 +15,13 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
   isAuthenticated: boolean
   error: string | null
   signUp(email: string, password: string): Promise<AuthResponse<TUser>>
-  signIn(email: string, password: string): Promise<AuthResponse<TUser>>
+  /**
+   * Sign in with email + password. Returns a discriminated union — narrow with
+   * `'requires2FA' in result` to handle 2FA-enabled accounts. When it's a
+   * challenge, pass the challengeToken to `verifyTwoFactor` (or
+   * `useRecoveryCode`) along with the user's code.
+   */
+  signIn(email: string, password: string): Promise<SignInResult<TUser>>
   signOut(): Promise<void>
   verifyEmail(token: string): Promise<void>
   forgotPassword(email: string): Promise<void>
@@ -41,6 +53,16 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
    * the fragment (api-mode redirect), then populates auth state.
    */
   handleMagicLinkCallback(): Promise<void>
+  /** Begin 2FA enrollment. Returns secret + otpauth URL + 10 recovery codes. */
+  setupTwoFactor(): Promise<TwoFactorSetupResult>
+  /** Confirm 2FA enrollment by verifying the first authenticator code. */
+  enableTwoFactor(code: string): Promise<void>
+  /** Disable 2FA. Requires the user's current password. */
+  disableTwoFactor(password: string): Promise<void>
+  /** Complete a 2FA-pending sign-in with a TOTP code. */
+  verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
+  /** Complete a 2FA-pending sign-in with a single-use recovery code. */
+  useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
 }
 
 // Context is typed with the base PublicUser. useAuth<TUser>() narrows via a type assertion,
@@ -148,6 +170,11 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
     handleOAuthCallback: () => service.handleOAuthCallback(),
     signInWithMagicLink: (email) => service.signInWithMagicLink(email),
     handleMagicLinkCallback: () => service.handleMagicLinkCallback(),
+    setupTwoFactor: () => service.setupTwoFactor(),
+    enableTwoFactor: (code) => service.enableTwoFactor(code),
+    disableTwoFactor: (password) => service.disableTwoFactor(password),
+    verifyTwoFactor: (challengeToken, code) => service.verifyTwoFactor(challengeToken, code),
+    useRecoveryCode: (challengeToken, code) => service.useRecoveryCode(challengeToken, code),
   }
 
   return (
