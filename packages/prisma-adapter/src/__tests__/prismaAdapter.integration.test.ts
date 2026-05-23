@@ -153,6 +153,44 @@ describeIf('prismaAdapter (integration)', () => {
       expect(found).toBeNull()
     })
 
+    it('deletes only matching (userId, type) tokens via deleteTokensByUserAndType', async () => {
+      const db = adapter()
+      const userA = await db.createUser({ email: 'a@example.com', passwordHash: 'h' })
+      const userB = await db.createUser({ email: 'b@example.com', passwordHash: 'h' })
+
+      // 3 REFRESH for A, 1 REFRESH for B, 1 PASSWORD_RESET for A
+      for (const raw of ['rA1', 'rA2', 'rA3']) {
+        await db.createToken({
+          userId: userA.id,
+          type: 'REFRESH',
+          token: hashToken(raw),
+          expiresAt: new Date(Date.now() + 60_000),
+        })
+      }
+      await db.createToken({
+        userId: userB.id,
+        type: 'REFRESH',
+        token: hashToken('rB1'),
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      await db.createToken({
+        userId: userA.id,
+        type: 'PASSWORD_RESET',
+        token: hashToken('prA'),
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+
+      await db.deleteTokensByUserAndType(userA.id, 'REFRESH')
+
+      expect(await db.findToken('rA1', 'REFRESH')).toBeNull()
+      expect(await db.findToken('rA2', 'REFRESH')).toBeNull()
+      expect(await db.findToken('rA3', 'REFRESH')).toBeNull()
+      // User B's REFRESH untouched
+      expect(await db.findToken('rB1', 'REFRESH')).not.toBeNull()
+      // A's PASSWORD_RESET untouched
+      expect(await db.findToken('prA', 'PASSWORD_RESET')).not.toBeNull()
+    })
+
     it('deletes expired tokens', async () => {
       const db = adapter()
       const user = await db.createUser({ email: 'expired@example.com', passwordHash: 'hash' })

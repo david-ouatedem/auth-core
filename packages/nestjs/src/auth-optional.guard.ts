@@ -1,7 +1,7 @@
-import { Injectable, Inject } from '@nestjs/common'
+import { Injectable, Inject, Optional } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import type { AuthCore } from '@authcore/core'
-import { AUTH_CORE } from './constants.js'
+import { AUTH_CORE, AUTH_COOKIE_NAME } from './constants.js'
 
 /**
  * Guard that optionally attaches `request.user` if a valid token is present.
@@ -21,14 +21,14 @@ import { AUTH_CORE } from './constants.js'
 export class AuthOptionalGuard implements CanActivate {
   constructor(
     @Inject(AUTH_CORE) private readonly auth: AuthCore,
+    @Optional() @Inject(AUTH_COOKIE_NAME) private readonly cookieName: string = 'authcore_token',
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest()
-    const authHeader = request.headers['authorization'] as string | undefined
+    const token = this.extractToken(request)
 
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7)
+    if (token) {
       const user = await this.auth.verifyToken(token)
       if (user) {
         request.user = user
@@ -36,5 +36,16 @@ export class AuthOptionalGuard implements CanActivate {
     }
 
     return true
+  }
+
+  private extractToken(request: {
+    headers: Record<string, string | undefined>
+    cookies?: Record<string, string>
+  }): string | null {
+    const authHeader = request.headers['authorization'] as string | undefined
+    if (authHeader?.startsWith('Bearer ')) {
+      return authHeader.slice(7)
+    }
+    return request.cookies?.[this.cookieName] ?? null
   }
 }

@@ -4,6 +4,7 @@ import type { AuthWebStateInterface } from './AuthWebState.interface.js'
 export interface AuthResponse<TUser extends PublicUser = PublicUser> {
   user: TUser
   token?: string
+  refreshToken?: string
 }
 
 export interface AuthWebServiceResponseInterface<TUser extends PublicUser = PublicUser> {
@@ -20,4 +21,8 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
   invite(email: string, role?: string): Promise<void>
   acceptInvitation(token: string, password: string): Promise<AuthResponse<TUser>>
   refreshUser(): Promise<void>
+  /** Exchange the current refresh token for a new JWT (+ rotated refresh token). */
+  refresh(): Promise<AuthResponse<TUser>>
+  /** Revoke the current refresh token on the server and clear local state. */
+  revokeSession(): Promise<void>
 }

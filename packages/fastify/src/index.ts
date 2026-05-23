@@ -73,6 +73,7 @@ export interface FastifyAuth {
  */
 export function createAuth(config: AuthCoreConfig): FastifyAuth {
   const core = createCoreAuth(config)
+  const cookieName = core.config.session.cookieName ?? 'authcore_token'
 
   return {
     plugin(pluginConfig?: PluginConfig) {
@@ -80,11 +81,11 @@ export function createAuth(config: AuthCoreConfig): FastifyAuth {
     },
 
     authRequired() {
-      return createAuthRequired(core) as preHandlerHookHandler
+      return createAuthRequired(core, cookieName) as preHandlerHookHandler
     },
 
     authOptional() {
-      return createAuthOptional(core) as preHandlerHookHandler
+      return createAuthOptional(core, cookieName) as preHandlerHookHandler
     },
 
     requireRole(...roles: string[]) {

@@ -21,7 +21,7 @@ const auth = createAuth({
     provider: resendAdapter(process.env.RESEND_API_KEY!),
     from: 'auth@yourdomain.com',
   },
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
 })
 ```
 

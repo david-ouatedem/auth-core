@@ -55,6 +55,26 @@ Returns:
 - **`auth.authOptional()`** `preHandler` hook that optionally attaches `request.user`
 - **`auth.requireRole(...roles)`** `preHandler` hook that checks `request.user.role`, returns 403 if not allowed. Must be used after `authRequired()`
 
+### Cookie name: configure once
+
+The cookie name is read from `session.cookieName` (default `'authcore_token'`) by both the plugin (when `useCookies: true`) and the `authRequired()` / `authOptional()` hooks. Put it on `session` so both paths agree:
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',
+  },
+})
+await app.register(cookie)
+await app.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+app.get('/dashboard', { preHandler: [auth.authRequired()] }, async (req) => ({ user: req.user }))
+```
+
+> **Fixed in 0.9:** before 0.9, `cookieName` on `plugin()` only affected the plugin's own routes; `auth.authRequired()` exposed to consumers always defaulted to `'authcore_token'`. Custom cookie names now work end-to-end.
+
 ### Routes
 
 Same endpoints as the Express adapter:

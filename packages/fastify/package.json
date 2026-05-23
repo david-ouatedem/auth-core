@@ -1,6 +1,6 @@
 {
   "name": "@authcore/fastify",
-  "version": "0.7.0",
+  "version": "0.10.0",
   "description": "Fastify adapter for AuthCore",
   "author": "David Ouatedem",
   "repository": {
@@ -8,8 +8,15 @@
     "url": "https://github.com/david-ouatedem/auth-core",
     "directory": "packages/fastify"
   },
-  "keywords": ["auth", "authcore", "fastify", "plugin"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "auth",
+    "authcore",
+    "fastify",
+    "plugin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

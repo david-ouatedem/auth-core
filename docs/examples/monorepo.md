@@ -41,6 +41,15 @@ pnpm dev:client    # Vite on :5173 with proxy
 app.use('/auth', auth.router({ useCookies: true }))
 ```
 
+The template uses the default `authcore_token` cookie name. To customize, put it on `session.cookieName` so both `auth.router()` and `auth.middleware()` agree:
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET!, cookieName: 'my_token' },
+})
+```
+
 **Client** — cookie mode (no token management needed):
 
 ```tsx

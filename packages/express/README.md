@@ -59,10 +59,31 @@ Returns:
 ```ts
 auth.router({
   useCookies: false,       // set to true for httpOnly cookie auth (monorepo mode)
-  cookieName: 'authcore_token',
+  cookieName: 'authcore_token',  // optional per-router override (deprecated — prefer session.cookieName)
   baseUrl: 'http://localhost:3000',  // used for building email verification/reset links
 })
 ```
+
+### Cookie name: configure once
+
+The cookie name is the **single source of truth** for both the route handler that writes it AND `auth.middleware()` which reads it. Put it on `session.cookieName` so both sides agree:
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',  // both the router cookie AND auth.middleware() read this
+  },
+})
+
+app.use(cookieParser())             // required for cookie reads
+app.use('/auth', auth.router({ useCookies: true }))
+app.get('/dashboard', auth.middleware(), (req, res) => res.json({ user: req.user }))
+```
+
+> **Fixed in 0.9:** before 0.9, setting `cookieName: 'foo'` on `router()` only changed the write path; `auth.middleware()` always read `'authcore_token'`, producing a permanent 401 loop on any custom cookie name. Now both sides read `session.cookieName`.
 
 ### Routes
 
@@ -110,7 +131,7 @@ const auth = createAuth({
     provider: resendAdapter(process.env.RESEND_API_KEY!),
     from: 'auth@yourdomain.com',
   },
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
 })
 ```
 

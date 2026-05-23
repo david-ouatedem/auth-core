@@ -10,6 +10,32 @@ export function generateOpaqueToken(): string {
 }
 
 /**
+ * Generate a CSRF token. Same shape as `generateOpaqueToken` (256 bits of entropy)
+ * but kept as a separate export to make intent explicit at call sites.
+ * The CSRF token is NOT hashed before storage — it's sent to the client as a cookie
+ * value AND compared byte-for-byte against the `X-CSRF-Token` header on each request.
+ */
+export function generateCsrfToken(): string {
+  return randomBytes(32).toString('hex')
+}
+
+/**
+ * Generate a PKCE code verifier (RFC 7636 §4.1).
+ * 32 random bytes → 43-char base64url string (no padding), within the 43-128 char range.
+ */
+export function generatePkceVerifier(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+/**
+ * Build the PKCE code challenge (S256 method) from a verifier.
+ * SHA-256 of the verifier, base64url-encoded (no padding).
+ */
+export function pkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url')
+}
+
+/**
  * Hash a raw token using SHA-256 for safe database storage.
  * Store the hash; return the raw token to the user.
  *

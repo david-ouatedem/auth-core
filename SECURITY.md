@@ -2,10 +2,30 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.5.x   | Yes       |
-| < 0.5   | No        |
+| Version    | Supported |
+|------------|-----------|
+| 0.10.x     | Yes — current  |
+| 0.9.x      | Critical fixes only |
+| 0.7.x–0.8.x| Not supported — upgrade to 0.9+ |
+| 0.5.x–0.6.x| **Not supported. Upgrade required.** Affected by the `forgotPassword` secret leak — see *Known Past Issues* below. |
+| < 0.5      | No        |
+
+## Recommended Defaults
+
+For production deployments on 0.10+:
+
+1. **Enable refresh tokens.** Set a short `session.expiresIn` (e.g. `'15m'`) and a longer `session.refreshExpiresIn` (default `'30d'`). The client SDK rotates the refresh token on every `POST /refresh`. A leaked JWT is good for at most 15 minutes; a leaked refresh token can be revoked via `auth.revoke()` or `auth.revokeAll(userId)`.
+2. **Enable CSRF in cookie mode.** Set `session.csrf: true`. The framework adapter sets the `${cookieName}_csrf` cookie automatically; `@authcore/core-web` and `@authcore/react` add the `X-CSRF-Token` header on POST/PUT/PATCH/DELETE without code changes.
+3. **Rotate `AUTH_SECRET` on a schedule** (every 6–12 months minimum). Combined with refresh-token revocation, this gives you a clean "rotate everything" path.
+4. **Wire `callbacks.onFailedLogin`** to a rate limiter (express-rate-limit, fastify-rate-limit) and/or audit log. AuthCore doesn't ship rate limiting; it gives you the hook.
+5. **Customize email templates** to remove any "from AuthCore" defaults and brand them to your product. See `docs/security/email-templates.md`.
+
+## Known Past Issues
+
+- **`AUTH_SECRET` leak in password reset emails (fixed in 0.9.0).** Releases 0.5.0 through 0.8.x that enabled the `passwordReset` feature embedded the JWT signing secret in the outbound reset-email URL. Email providers, inbox archives, and SIEM logs of affected deployments may have captured the secret. If you ran any affected version with `passwordReset` enabled:
+  1. **Rotate `AUTH_SECRET` immediately.** Any JWT minted with the old secret should be considered compromised.
+  2. Force-logout existing sessions by deploying with the new secret (JWTs signed with the old secret will be rejected).
+  3. Audit mail-provider logs for the leaked secret value and request log purges where possible.
 
 ## Reporting a Vulnerability
 

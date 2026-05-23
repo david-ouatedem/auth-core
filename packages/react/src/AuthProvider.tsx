@@ -17,6 +17,10 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
   invite(email: string, role?: string): Promise<void>
   acceptInvitation(token: string, password: string): Promise<AuthResponse<TUser>>
   refreshUser(): Promise<void>
+  /** Exchange the current refresh token for a fresh JWT + rotated refresh token. */
+  refresh(): Promise<AuthResponse<TUser>>
+  /** Revoke the current refresh token server-side and clear local state. */
+  revokeSession(): Promise<void>
 }
 
 // Context is typed with the base PublicUser. useAuth<TUser>() narrows via a type assertion,
@@ -74,6 +78,7 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
           persistSession,
           storageKey,
           token: '',
+          refreshToken: null,
           user: null,
           error: null,
           isLoading: true,
@@ -116,6 +121,8 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
     invite: (email, role) => service.invite(email, role),
     acceptInvitation: (token, password) => service.acceptInvitation(token, password),
     refreshUser: () => service.refreshUser(),
+    refresh: () => service.refresh(),
+    revokeSession: () => service.revokeSession(),
   }
 
   return (

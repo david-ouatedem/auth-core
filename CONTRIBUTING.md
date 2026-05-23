@@ -189,7 +189,9 @@ Framework adapters wrap `@authcore/core` and expose framework-native APIs. Your 
 2. Expose an authentication middleware/guard
 3. Expose a role-checking middleware/guard
 4. Register all auth routes (register, login, logout, me, verify-email, forgot-password, reset-password, invite, accept-invitation)
-5. Map `AuthError` to the framework's HTTP error type
+5. Map `AuthError` to the framework's HTTP error type — 401 for missing/invalid auth, 403 only for role denials
+6. **Read `core.config.session.cookieName` once and thread it into BOTH the cookie writer (route handlers) AND the cookie reader (middleware/guard).** If the two paths use different names you get a permanent 401 loop on `/me` — this is the bug we fixed in 0.9. Per-router/per-plugin `cookieName` overrides are allowed for backward compatibility, but they MUST be threaded through to the middleware too.
+7. Build `resetUrl` as `${baseUrl}${paths.resetPassword}` and pass it as `auth.forgotPassword(body, { resetUrl })`. Mirror the existing `inviteUrl` pattern at `packages/express/src/router.ts:139`. Core throws `MISSING_URL` (500) if a caller forgets — this is intentional so a missing plumbing step fails loudly instead of silently leaking config into emails.
 
 See `packages/express`, `packages/fastify`, or `packages/nestjs` for reference.
 

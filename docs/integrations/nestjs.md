@@ -108,6 +108,42 @@ export class PublicController {
 }
 ```
 
+## Cookie Mode
+
+Set `useCookies: true` and register `cookie-parser` middleware in `main.ts`. NestJS cookie support requires `@nestjs/platform-express` (the default).
+
+```ts
+// main.ts
+import { NestFactory } from '@nestjs/core'
+import cookieParser from 'cookie-parser'
+import { AppModule } from './app.module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(cookieParser())
+  await app.listen(3000)
+}
+bootstrap()
+```
+
+```ts
+// app.module.ts
+AuthModule.register({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',  // optional; default 'authcore_token'
+  },
+  useCookies: true,
+})
+```
+
+When `useCookies` is true:
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/accept-invitation` set the cookie and return `{ user }` (no token in body).
+- `POST /auth/logout` clears the cookie.
+- `AuthGuard` and `AuthOptionalGuard` fall back to reading the cookie if no `Authorization: Bearer ...` header is present.
+
 ## With Email Features & Invitations
 
 ```ts
@@ -135,14 +171,17 @@ All options from [`@authcore/core` configuration](/configuration) are accepted, 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `baseUrl` | `string` | `''` | Base URL used to build links in auth emails |
+| `useCookies` | `boolean` | `false` | Set/clear an httpOnly cookie on register/login/logout/accept-invitation instead of returning the token in the response body |
+
+Cookie name is read from `session.cookieName` (default `'authcore_token'`). See the [Configuration reference](/configuration) for the full session shape.
 
 ### Guards
 
 | Guard | Description |
 |-------|-------------|
-| `AuthGuard` | Requires a valid JWT. Attaches the user to `request.user`. Returns 403 if unauthenticated. |
+| `AuthGuard` | Requires a valid JWT. Attaches the user to `request.user`. Throws `UnauthorizedException` (401) if no token is present or the token is invalid. |
 | `AuthOptionalGuard` | Attaches `request.user` if a valid token is present. Never rejects the request. |
-| `RolesGuard` | Checks `request.user.role` against `@Roles()`. Returns 403 if the role is not allowed. Must be used after `AuthGuard`. |
+| `RolesGuard` | Checks `request.user.role` against `@Roles()`. Throws `ForbiddenException` (403) if the role is not allowed. Must be used after `AuthGuard`. |
 
 ### Decorators
 
@@ -167,3 +206,24 @@ All routes are mounted under `/auth` by default:
 | POST | `/auth/reset-password` | `{ token, password }` | Reset password |
 | POST | `/auth/invite` | `{ email, role? }` | Send an invitation |
 | POST | `/auth/accept-invitation` | `{ token, password }` | Accept an invitation and set a password |
+| POST | `/auth/refresh` | `{ refreshToken }` (or cookie) | Rotate the refresh token; returns new `{ user, token, refreshToken }` |
+| POST | `/auth/revoke` | `{ refreshToken }` (or cookie) | Revoke a refresh token (idempotent) |
+
+## Refresh Tokens (0.10+)
+
+`register`, `login`, `acceptInvitation`, and `refresh` all return `{ user, token, refreshToken }` in api mode (or set httpOnly cookies in cookie mode). Configure with `session.refreshExpiresIn` (default `'30d'`). See [Refresh Tokens](/security/refresh-tokens).
+
+## CSRF (0.10+, cookie mode)
+
+Set `session.csrf: true` and bind `CsrfGuard` globally in `main.ts`:
+
+```ts
+import cookieParser from 'cookie-parser'
+import { CsrfGuard } from '@authcore/nestjs'
+
+const app = await NestFactory.create(AppModule)
+app.use(cookieParser())
+app.useGlobalGuards(app.get(CsrfGuard))
+```
+
+State-changing requests must include the `X-CSRF-Token` header matching `${cookieName}_csrf`. See [CSRF](/security/csrf).

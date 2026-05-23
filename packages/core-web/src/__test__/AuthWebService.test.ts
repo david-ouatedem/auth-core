@@ -506,3 +506,198 @@ describe('AuthWebService — transformers', () => {
     expect(service.getState().isAuthenticated).toBe(true);
   });
 });
+
+// ---- 0.10: refresh tokens ----
+
+describe('AuthWebService — refresh tokens', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    if (typeof localStorage !== 'undefined') {
+      localStorage.clear();
+    } else {
+      const store: Record<string, string> = {};
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => store[key] || null,
+        setItem: (key: string, value: string) => { store[key] = value; },
+        removeItem: (key: string) => { delete store[key]; },
+        clear: () => { Object.keys(store).forEach(k => delete store[k]); }
+      });
+    }
+    vi.stubGlobal('window', {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('signIn stores refreshToken in state and localStorage when persistSession', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user: mockUser, token: 'tok', refreshToken: 'refresh-tok' }),
+    })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: null,
+      refreshToken: null,
+      user: null,
+      error: null,
+      isLoading: false,
+      isAuthenticated: false,
+    });
+
+    await service.signIn({ email: 'a@b.com', password: 'pass' });
+
+    expect(service.getState().refreshToken).toBe('refresh-tok');
+    expect(localStorage.getItem('authcore_token_refresh')).toBe('refresh-tok');
+  });
+
+  it('refresh sends current refreshToken, updates state on rotation', async () => {
+    let calls = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls++;
+      const body = JSON.parse(init?.body as string);
+      if (calls === 1) {
+        // Initial signIn
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ user: mockUser, token: 'old-jwt', refreshToken: 'old-refresh' }),
+        };
+      }
+      // /refresh call — server expects old-refresh, returns rotated
+      expect(body.refreshToken).toBe('old-refresh');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ user: mockUser, token: 'new-jwt', refreshToken: 'new-refresh' }),
+      };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: null,
+      refreshToken: null,
+      user: null,
+      error: null,
+      isLoading: false,
+      isAuthenticated: false,
+    });
+
+    await service.signIn({ email: 'a@b.com', password: 'pass' });
+    await service.refresh();
+
+    expect(service.getState().token).toBe('new-jwt');
+    expect(service.getState().refreshToken).toBe('new-refresh');
+    expect(localStorage.getItem('authcore_token')).toBe('new-jwt');
+    expect(localStorage.getItem('authcore_token_refresh')).toBe('new-refresh');
+  });
+
+  it('refresh failure clears state and rejects', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'Invalid refresh', code: 'INVALID_TOKEN' }),
+    })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: 'old',
+      refreshToken: 'bad-refresh',
+      user: mockUser,
+      error: null,
+      isLoading: false,
+      isAuthenticated: true,
+    });
+
+    await expect(service.refresh()).rejects.toThrow('Invalid refresh');
+    expect(service.getState().isAuthenticated).toBe(false);
+    expect(service.getState().refreshToken).toBeNull();
+    expect(service.getState().user).toBeNull();
+  });
+
+  it('revokeSession posts to /revoke and clears state even on server error', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'server' }),
+    })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: 'tok',
+      refreshToken: 'rt',
+      user: mockUser,
+      error: null,
+      isLoading: false,
+      isAuthenticated: true,
+    });
+
+    await expect(service.revokeSession()).resolves.toBeUndefined();
+    expect(service.getState().user).toBeNull();
+    expect(service.getState().refreshToken).toBeNull();
+  });
+
+  it('signOut sends refreshToken in body for server-side revocation', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      expect(body.refreshToken).toBe('rt-to-revoke');
+      return { ok: true, status: 200, json: async () => ({ message: 'ok' }) };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: 'tok',
+      refreshToken: 'rt-to-revoke',
+      user: mockUser,
+      error: null,
+      isLoading: false,
+      isAuthenticated: true,
+    });
+
+    await service.signOut();
+    expect(service.getState().refreshToken).toBeNull();
+  });
+
+  it('restores refreshToken from localStorage on construction', () => {
+    localStorage.setItem('authcore_token', 'persisted-jwt');
+    localStorage.setItem('authcore_token_refresh', 'persisted-refresh');
+
+    const service = new AuthWebService({
+      baseUrl: 'http://api.example.com',
+      mode: 'api',
+      persistSession: true,
+      storageKey: 'authcore_token',
+      token: null,
+      refreshToken: null,
+      user: null,
+      error: null,
+      isLoading: false,
+      isAuthenticated: false,
+    });
+
+    expect(service.getState().token).toBe('persisted-jwt');
+    expect(service.getState().refreshToken).toBe('persisted-refresh');
+  });
+});

@@ -16,8 +16,21 @@ import { prismaAdapter } from '@authcore/prisma-adapter'
 import { createAuth } from '../index.js'
 import * as dotenv from 'dotenv'
 import { resolve } from 'node:path'
+import type { EmailAdapter } from '@authcore/core'
 
 dotenv.config({ path: resolve(process.cwd(), '.env') })
+
+/** In-memory EmailAdapter that captures every send() for assertions. */
+function createCaptureEmail(): {
+  provider: EmailAdapter
+  sent: Array<{ from: string; to: string; subject: string; html: string; text: string }>
+} {
+  const sent: Array<{ from: string; to: string; subject: string; html: string; text: string }> = []
+  return {
+    provider: { async send(options) { sent.push({ ...options }) } },
+    sent,
+  }
+}
 
 const DATABASE_URL = process.env['DATABASE_URL']
 const AUTH_SECRET = process.env['AUTH_SECRET'] ?? 'test-secret-at-least-32-chars-long-enough!!'
@@ -274,5 +287,437 @@ describeIf('@authcore/fastify integration', () => {
       expect(meRes.statusCode).toBe(200)
       expect(meRes.json().email).toBe('fullflow@example.com')
     })
+  })
+})
+
+// ---- Extended flows: password reset, cookie mode, custom cookieName, invite, RBAC ----
+
+describeIf('@authcore/fastify — extended flows', () => {
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
+  it('forgot-password / reset-password E2E does NOT leak AUTH_SECRET in the email URL', async () => {
+    const capture = createCaptureEmail()
+
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '1h' },
+      features: ['passwordReset'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    const flowApp = Fastify()
+    await flowApp.register(cookie)
+    await flowApp.register(auth.plugin({ baseUrl: 'https://app.example.com' }), { prefix: '/auth' })
+    await flowApp.ready()
+
+    await flowApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'reset@example.com', password: 'originalpass123' },
+    })
+
+    const forgotRes = await flowApp.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: { email: 'reset@example.com' },
+    })
+    expect(forgotRes.statusCode).toBe(200)
+    expect(capture.sent).toHaveLength(1)
+
+    const email = capture.sent[0]!
+    expect(email.html).toContain('https://app.example.com/reset-password?token=')
+    expect(email.html).not.toContain(AUTH_SECRET)
+    expect(email.text).not.toContain(AUTH_SECRET)
+
+    const rawToken = email.html.match(/token=([a-f0-9]+)/)![1]!
+
+    const resetRes = await flowApp.inject({
+      method: 'POST',
+      url: '/auth/reset-password',
+      payload: { token: rawToken, password: 'newpassword456' },
+    })
+    expect(resetRes.statusCode).toBe(200)
+
+    const loginRes = await flowApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'reset@example.com', password: 'newpassword456' },
+    })
+    expect(loginRes.statusCode).toBe(200)
+
+    await flowApp.close()
+  })
+
+  it('cookie-mode round trip: login sets cookie, /me reads it', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '1h' },
+    })
+
+    const cookieApp = Fastify()
+    await cookieApp.register(cookie)
+    await cookieApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await cookieApp.ready()
+
+    const regRes = await cookieApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'cookie@example.com', password: 'cookiepass123' },
+    })
+    expect(regRes.statusCode).toBe(201)
+    expect(regRes.json().token).toBeUndefined()
+    const setCookieHeader = regRes.headers['set-cookie'] as string | string[]
+    const cookieStr = Array.isArray(setCookieHeader) ? setCookieHeader[0]! : setCookieHeader
+    expect(cookieStr).toMatch(/^authcore_token=/)
+
+    const meRes = await cookieApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { cookie: cookieStr.split(';')[0]! },
+    })
+    expect(meRes.statusCode).toBe(200)
+    expect(meRes.json().email).toBe('cookie@example.com')
+
+    await cookieApp.close()
+  })
+
+  it('custom session.cookieName: login writes AND /me reads the SAME custom name', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '1h', cookieName: 'my_token' },
+    })
+
+    const customApp = Fastify()
+    await customApp.register(cookie)
+    await customApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await customApp.ready()
+
+    const regRes = await customApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'custom@example.com', password: 'custompass123' },
+    })
+    expect(regRes.statusCode).toBe(201)
+    const setCookieHeader = regRes.headers['set-cookie'] as string | string[]
+    const cookieStr = Array.isArray(setCookieHeader) ? setCookieHeader[0]! : setCookieHeader
+    expect(cookieStr).toMatch(/^my_token=/)
+
+    const meRes = await customApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { cookie: cookieStr.split(';')[0]! },
+    })
+    expect(meRes.statusCode).toBe(200)
+    expect(meRes.json().email).toBe('custom@example.com')
+
+    await customApp.close()
+  })
+
+  it('requireRole happy path: admin user can access protected admin route', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '1h' },
+    })
+
+    const adminApp = Fastify()
+    await adminApp.register(cookie)
+    await adminApp.register(auth.plugin(), { prefix: '/auth' })
+    adminApp.get('/admin', {
+      preHandler: [auth.authRequired(), auth.requireRole('admin')],
+    }, async (request) => ({ user: request.user }))
+    await adminApp.ready()
+
+    await adminApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'admin@example.com', password: 'adminpass123' },
+    })
+    await prisma.user.update({
+      where: { email: 'admin@example.com' },
+      data: { role: 'admin' },
+    })
+    const loginRes = await adminApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'admin@example.com', password: 'adminpass123' },
+    })
+    const token = loginRes.json().token
+
+    const adminRes = await adminApp.inject({
+      method: 'GET',
+      url: '/admin',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(adminRes.statusCode).toBe(200)
+    expect(adminRes.json().user.role).toBe('admin')
+
+    await adminApp.close()
+  })
+
+  it('invitation flow: invite + accept-invitation E2E', async () => {
+    const capture = createCaptureEmail()
+
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '1h' },
+      features: ['invitation'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    const inviteApp = Fastify()
+    await inviteApp.register(cookie)
+    await inviteApp.register(auth.plugin({ baseUrl: 'https://app.example.com' }), { prefix: '/auth' })
+    await inviteApp.ready()
+
+    const inviterReg = await inviteApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'inviter@example.com', password: 'inviterpass123' },
+    })
+    const inviterToken = inviterReg.json().token
+
+    const inviteRes = await inviteApp.inject({
+      method: 'POST',
+      url: '/auth/invite',
+      headers: { authorization: `Bearer ${inviterToken}` },
+      payload: { email: 'invited@example.com', role: 'editor' },
+    })
+    expect(inviteRes.statusCode).toBe(200)
+    expect(capture.sent[0]!.html).toContain('https://app.example.com/accept-invitation?token=')
+
+    const rawToken = capture.sent[0]!.html.match(/token=([a-f0-9]+)/)![1]!
+
+    const acceptRes = await inviteApp.inject({
+      method: 'POST',
+      url: '/auth/accept-invitation',
+      payload: { token: rawToken, password: 'invitedpass123' },
+    })
+    expect(acceptRes.statusCode).toBe(200)
+    expect(acceptRes.json().user.email).toBe('invited@example.com')
+    expect(acceptRes.json().user.role).toBe('editor')
+
+    await inviteApp.close()
+  })
+})
+
+// ---- 0.10: refresh tokens and CSRF ----
+
+describeIf('@authcore/fastify — refresh tokens', () => {
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
+  it('register returns refreshToken in api mode', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, expiresIn: '15m', refreshExpiresIn: '30d' },
+    })
+    const app2 = Fastify()
+    await app2.register(cookie)
+    await app2.register(auth.plugin(), { prefix: '/auth' })
+    await app2.ready()
+
+    const res = await app2.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'refresh@example.com', password: 'refreshpass123' },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json()
+    expect(body.token).toBeTruthy()
+    expect(body.refreshToken).toMatch(/^[a-f0-9]{64}$/)
+    await app2.close()
+  })
+
+  it('POST /refresh rotates the refresh token', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+    })
+    const app2 = Fastify()
+    await app2.register(cookie)
+    await app2.register(auth.plugin(), { prefix: '/auth' })
+    await app2.ready()
+
+    const reg = await app2.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'rot@example.com', password: 'rotpass123' },
+    })
+    const oldRefresh = reg.json().refreshToken as string
+
+    const refreshRes = await app2.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: oldRefresh },
+    })
+    expect(refreshRes.statusCode).toBe(200)
+    expect(refreshRes.json().refreshToken).not.toBe(oldRefresh)
+
+    const reused = await app2.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: oldRefresh },
+    })
+    expect(reused.statusCode).toBe(401)
+    expect(reused.json().code).toBe('INVALID_TOKEN')
+    await app2.close()
+  })
+
+  it('cookie mode: register sets refresh cookie; /refresh reads it', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET },
+    })
+    const app2 = Fastify()
+    await app2.register(cookie)
+    await app2.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await app2.ready()
+
+    const reg = await app2.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'ckrefresh@example.com', password: 'ckpass123' },
+    })
+    expect(reg.statusCode).toBe(201)
+    const setCookieRaw = reg.headers['set-cookie']
+    const setCookies = (Array.isArray(setCookieRaw) ? setCookieRaw : [setCookieRaw as string]).filter(Boolean)
+    const names = setCookies.map((c) => c.split('=')[0])
+    expect(names).toContain('authcore_token')
+    expect(names).toContain('authcore_token_refresh')
+
+    const cookieHeader = setCookies.map((c) => c.split(';')[0]).join('; ')
+    const refRes = await app2.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: cookieHeader },
+    })
+    expect(refRes.statusCode).toBe(200)
+    await app2.close()
+  })
+})
+
+describeIf('@authcore/fastify — CSRF (opt-in)', () => {
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
+  it('with csrf: true, register sets the authcore_token_csrf cookie (NOT httpOnly)', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+    })
+    const csrfApp = Fastify()
+    await csrfApp.register(cookie)
+    await csrfApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await csrfApp.ready()
+
+    const reg = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'csrf@example.com', password: 'csrfpass123' },
+    })
+    const raw = reg.headers['set-cookie']
+    const cookies = (Array.isArray(raw) ? raw : [raw as string]).filter(Boolean)
+    const csrfCookie = cookies.find((c) => c.startsWith('authcore_token_csrf='))
+    expect(csrfCookie).toBeTruthy()
+    expect(csrfCookie!.toLowerCase()).not.toContain('httponly')
+    await csrfApp.close()
+  })
+
+  it('state-changing request without matching X-CSRF-Token returns 403', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+    })
+    const csrfApp = Fastify()
+    await csrfApp.register(cookie)
+    await csrfApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await csrfApp.ready()
+
+    const reg = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'csrf2@example.com', password: 'csrfpass123' },
+    })
+    const raw = reg.headers['set-cookie']
+    const cookies = (Array.isArray(raw) ? raw : [raw as string]).filter(Boolean)
+    const cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ')
+
+    const blocked = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: cookieHeader },
+      payload: {},
+    })
+    expect(blocked.statusCode).toBe(403)
+    expect(blocked.json().code).toBe('CSRF_INVALID')
+    await csrfApp.close()
+  })
+
+  it('matching X-CSRF-Token header passes the CSRF check', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+    })
+    const csrfApp = Fastify()
+    await csrfApp.register(cookie)
+    await csrfApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await csrfApp.ready()
+
+    const reg = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'csrf3@example.com', password: 'csrfpass123' },
+    })
+    const raw = reg.headers['set-cookie']
+    const cookies = (Array.isArray(raw) ? raw : [raw as string]).filter(Boolean)
+    const cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ')
+    const csrfPair = cookies.find((c) => c.startsWith('authcore_token_csrf='))!
+    const csrfValue = csrfPair.split(';')[0]!.split('=')[1]!
+
+    const allowed = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrfValue },
+      payload: {},
+    })
+    // CSRF check passed; refresh body empty → auth-level 401
+    expect(allowed.statusCode).toBe(401)
+    expect(allowed.json().code).toBe('INVALID_TOKEN')
+    await csrfApp.close()
+  })
+
+  it('GET requests skip CSRF check', async () => {
+    const auth = createAuth({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: AUTH_SECRET, csrf: true },
+    })
+    const csrfApp = Fastify()
+    await csrfApp.register(cookie)
+    await csrfApp.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+    await csrfApp.ready()
+
+    const reg = await csrfApp.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'csrfget@example.com', password: 'csrfpass123' },
+    })
+    const raw = reg.headers['set-cookie']
+    const cookies = (Array.isArray(raw) ? raw : [raw as string]).filter(Boolean)
+    const cookieHeader = cookies.map((c) => c.split(';')[0]).join('; ')
+
+    const meRes = await csrfApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { cookie: cookieHeader },
+    })
+    expect(meRes.statusCode).toBe(200)
+    await csrfApp.close()
   })
 })

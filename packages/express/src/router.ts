@@ -1,6 +1,7 @@
 import { Router } from 'express'
+import type { Request, Response } from 'express'
 import type { AuthCore } from '@authcore/core'
-import { AuthError } from '@authcore/core'
+import { AuthError, generateCsrfToken, safeCompareTokens } from '@authcore/core'
 import { createAuthMiddleware } from './middleware.js'
 
 export interface RouterConfig {
@@ -16,17 +17,16 @@ export interface RouterConfig {
     resetPassword?: string
     invite?: string
     acceptInvitation?: string
+    refresh?: string
+    revoke?: string
   }
-  /** Cookie name for monorepo/cookie mode (default: 'authcore_token') */
+  /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
-  /** If true, set an httpOnly cookie on login/register instead of returning token in body */
+  /** If true, set httpOnly cookies on login/register/refresh/accept-invitation instead of returning the token in the body */
   useCookies?: boolean
 }
 
-/**
- * Handle AuthError and generic errors uniformly.
- */
-function handleError(res: import('express').Response, err: unknown): void {
+function handleError(res: Response, err: unknown): void {
   if (err instanceof AuthError) {
     res.status(err.statusCode).json({ error: err.message, code: err.code })
     return
@@ -35,18 +35,25 @@ function handleError(res: import('express').Response, err: unknown): void {
   res.status(500).json({ error: 'Internal server error' })
 }
 
+/** Methods that mutate server state — subject to CSRF check when enabled. */
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
 /**
  * Create and return an Express Router with all auth routes mounted.
  */
 export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Router {
   const router = Router()
-  const middleware = createAuthMiddleware(auth)
   const {
     baseUrl = '',
-    cookieName = 'authcore_token',
     useCookies = false,
     routes: routePaths = {},
   } = config
+  const cookieName = config.cookieName ?? auth.config.session.cookieName ?? 'authcore_token'
+  const refreshCookieName = `${cookieName}_refresh`
+  const csrfCookieName = `${cookieName}_csrf`
+  const csrfEnabled = auth.config.session.csrf === true
+  const middleware = createAuthMiddleware(auth, cookieName)
+  const isProd = process.env['NODE_ENV'] === 'production'
 
   const paths = {
     register: routePaths.register ?? '/register',
@@ -58,17 +65,70 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
     resetPassword: routePaths.resetPassword ?? '/reset-password',
     invite: routePaths.invite ?? '/invite',
     acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
+    refresh: routePaths.refresh ?? '/refresh',
+    revoke: routePaths.revoke ?? '/revoke',
   }
+
+  function setAuthCookies(res: Response, token: string, refreshToken: string): void {
+    res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' })
+    res.cookie(refreshCookieName, refreshToken, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' })
+    if (csrfEnabled) {
+      res.cookie(csrfCookieName, generateCsrfToken(), {
+        httpOnly: false, // must be readable by client JS
+        sameSite: 'lax',
+        secure: isProd,
+        path: '/',
+      })
+    }
+  }
+
+  function clearAuthCookies(res: Response): void {
+    res.clearCookie(cookieName, { path: '/' })
+    res.clearCookie(refreshCookieName, { path: '/' })
+    if (csrfEnabled) res.clearCookie(csrfCookieName, { path: '/' })
+  }
+
+  function readRefreshToken(req: Request): string | null {
+    const body = req.body as { refreshToken?: string } | undefined
+    if (body?.refreshToken) return body.refreshToken
+    const cookies = req.cookies as Record<string, string> | undefined
+    return cookies?.[refreshCookieName] ?? null
+  }
+
+  /**
+   * CSRF guard. Skips safe methods and pre-auth endpoints (register/login),
+   * which establish the CSRF cookie. Returns 403 on mismatch.
+   *
+   * Only invoked when `session.csrf: true`.
+   */
+  function csrfGuard(req: Request, res: Response, next: () => void): void {
+    if (!csrfEnabled) return next()
+    if (!STATE_CHANGING_METHODS.has(req.method.toUpperCase())) return next()
+    const cookies = req.cookies as Record<string, string> | undefined
+    const cookieToken = cookies?.[csrfCookieName]
+    // If there's no CSRF cookie yet (first request, pre-login), let it through.
+    // Subsequent authenticated state-changing requests must echo it back.
+    if (!cookieToken) return next()
+    const headerToken = req.headers['x-csrf-token']
+    const headerValue = Array.isArray(headerToken) ? headerToken[0] : headerToken
+    if (!headerValue || !safeCompareTokens(cookieToken, headerValue)) {
+      res.status(403).json({ error: 'CSRF token missing or invalid', code: 'CSRF_INVALID' })
+      return
+    }
+    next()
+  }
+
+  router.use(csrfGuard)
 
   // POST /register
   router.post(paths.register, async (req, res) => {
     try {
-      const { user, token } = await auth.register(req.body)
+      const { user, token, refreshToken } = await auth.register(req.body)
       if (useCookies) {
-        res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: process.env['NODE_ENV'] === 'production' })
+        setAuthCookies(res, token, refreshToken)
         res.status(201).json({ user })
       } else {
-        res.status(201).json({ user, token })
+        res.status(201).json({ user, token, refreshToken })
       }
     } catch (err) {
       handleError(res, err)
@@ -78,23 +138,59 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
   // POST /login
   router.post(paths.login, async (req, res) => {
     try {
-      const { user, token } = await auth.login(req.body)
+      const { user, token, refreshToken } = await auth.login(req.body)
       if (useCookies) {
-        res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: process.env['NODE_ENV'] === 'production' })
+        setAuthCookies(res, token, refreshToken)
         res.json({ user })
       } else {
-        res.json({ user, token })
+        res.json({ user, token, refreshToken })
       }
     } catch (err) {
       handleError(res, err)
     }
   })
 
-  // POST /logout
-  router.post(paths.logout, (_req, res) => {
-    if (useCookies) {
-      res.clearCookie(cookieName)
+  // POST /refresh — exchange a refresh token for a new JWT + rotated refresh token
+  router.post(paths.refresh, async (req, res) => {
+    try {
+      const rawRefresh = readRefreshToken(req)
+      if (!rawRefresh) {
+        res.status(401).json({ error: 'Refresh token is required', code: 'INVALID_TOKEN' })
+        return
+      }
+      const { user, token, refreshToken } = await auth.refresh(rawRefresh)
+      if (useCookies) {
+        setAuthCookies(res, token, refreshToken)
+        res.json({ user })
+      } else {
+        res.json({ user, token, refreshToken })
+      }
+    } catch (err) {
+      handleError(res, err)
     }
+  })
+
+  // POST /revoke — invalidate a single refresh token (idempotent)
+  router.post(paths.revoke, async (req, res) => {
+    try {
+      const rawRefresh = readRefreshToken(req)
+      if (rawRefresh) await auth.revoke(rawRefresh)
+      if (useCookies) clearAuthCookies(res)
+      res.json({ message: 'Revoked' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  })
+
+  // POST /logout — revoke refresh + clear cookies
+  router.post(paths.logout, async (req, res) => {
+    try {
+      const rawRefresh = readRefreshToken(req)
+      if (rawRefresh) await auth.revoke(rawRefresh)
+    } catch {
+      // Swallow — logout should be best-effort
+    }
+    if (useCookies) clearAuthCookies(res)
     res.json({ message: 'Logged out successfully' })
   })
 
@@ -116,7 +212,8 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
   // POST /forgot-password — always 200
   router.post(paths.forgotPassword, async (req, res) => {
     try {
-      await auth.forgotPassword(req.body)
+      const resetUrl = `${baseUrl}${paths.resetPassword}`
+      await auth.forgotPassword(req.body, { resetUrl })
     } catch {
       // Intentionally swallow — no email enumeration
     }
@@ -147,12 +244,12 @@ export function createAuthRouter(auth: AuthCore, config: RouterConfig = {}): Rou
   // POST /accept-invitation (public)
   router.post(paths.acceptInvitation, async (req, res) => {
     try {
-      const { user, token } = await auth.acceptInvitation(req.body)
+      const { user, token, refreshToken } = await auth.acceptInvitation(req.body)
       if (useCookies) {
-        res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: process.env['NODE_ENV'] === 'production' })
+        setAuthCookies(res, token, refreshToken)
         res.json({ user })
       } else {
-        res.json({ user, token })
+        res.json({ user, token, refreshToken })
       }
     } catch (err) {
       handleError(res, err)

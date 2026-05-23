@@ -124,7 +124,7 @@ Creates an auth service instance.
 | Field | Type | Description |
 |-------|------|-------------|
 | `baseUrl` | `string` | Your backend URL |
-| `mode` | `'api' \| 'cookie'` | `'api'` uses Bearer tokens, `'cookie'` uses httpOnly cookies |
+| `mode` | `'api' \| 'cookie'` | `'api'` uses Bearer tokens, `'cookie'` uses `credentials: 'include'` and lets the browser carry whatever cookie the backend sets (default `'authcore_token'`, controlled by the backend's `session.cookieName`) |
 | `persistSession` | `boolean` | Save token in localStorage (api mode) |
 | `storageKey` | `string` | localStorage key for the token |
 | `user` | `TUser \| null` | Initial user (usually `null`) |

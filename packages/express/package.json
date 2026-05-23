@@ -1,6 +1,6 @@
 {
   "name": "@authcore/express",
-  "version": "0.7.0",
+  "version": "0.10.0",
   "description": "Express adapter for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",
@@ -9,9 +9,19 @@
     "url": "https://github.com/david-ouatedem/auth-core",
     "directory": "packages/express"
   },
-  "keywords": ["auth", "authcore", "express", "middleware"],
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "auth",
+    "authcore",
+    "express",
+    "middleware"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

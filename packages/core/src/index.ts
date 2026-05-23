@@ -2,6 +2,9 @@
 export { hashPassword, verifyPassword } from './utils/password.js'
 export {
   generateOpaqueToken,
+  generateCsrfToken,
+  generatePkceVerifier,
+  pkceChallenge,
   hashToken,
   safeCompareTokens,
   signJwt,
@@ -31,6 +34,17 @@ export type {
 export { createEmailVerification, verifyEmail } from './features/emailVerification.js'
 export { createPasswordReset, resetPassword } from './features/passwordReset.js'
 export { createInvitation, acceptInvitation } from './features/invitation.js'
+export {
+  issueRefreshToken,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  revokeAllRefreshTokensForUser,
+} from './features/refresh.js'
+export {
+  defaultVerifyEmailTemplate,
+  defaultResetPasswordTemplate,
+  defaultInvitationTemplate,
+} from './features/templates.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'

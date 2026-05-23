@@ -20,7 +20,26 @@ import {
   createInvitation,
   acceptInvitation as acceptInvitationFeature,
 } from './features/invitation.js'
+import {
+  issueRefreshToken,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  revokeAllRefreshTokensForUser,
+} from './features/refresh.js'
 import { inviteSchema, acceptInvitationSchema } from './utils/validation.js'
+
+/** Parse an `expiresIn` value (e.g. '30d', '15m', '2h', '90s') into milliseconds. */
+function parseDurationMs(value: string | undefined, fallbackMs: number): number {
+  if (!value) return fallbackMs
+  const match = value.match(/^(\d+)\s*([smhd])$/)
+  if (!match) return fallbackMs
+  const n = Number(match[1])
+  const unit = match[2]
+  const mult = unit === 's' ? 1000 : unit === 'm' ? 60_000 : unit === 'h' ? 3_600_000 : 86_400_000
+  return n * mult
+}
+
+const DEFAULT_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d
 
 export class AuthError extends Error {
   constructor(
@@ -42,13 +61,13 @@ export interface AuthCore {
    * Register a new user.
    * @throws AuthError on validation failure (400) or duplicate email (409)
    */
-  register(input: unknown): Promise<{ user: PublicUser; token: string }>
+  register(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
 
   /**
    * Authenticate a user with email/password.
    * @throws AuthError on invalid credentials (401)
    */
-  login(input: unknown): Promise<{ user: PublicUser; token: string }>
+  login(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
 
   /**
    * Verify a JWT and return the public user.
@@ -73,9 +92,12 @@ export interface AuthCore {
   verifyEmail(input: unknown): Promise<void>
 
   /**
-   * Initiate password reset. Always returns successfully (prevents enumeration).
+   * Initiate password reset. Always returns successfully when called via a framework
+   * adapter (prevents email enumeration). Throws `MISSING_URL` (500) if called directly
+   * without a `resetUrl`. Framework adapters always supply one built from baseUrl +
+   * the configured reset-password route.
    */
-  forgotPassword(input: unknown): Promise<void>
+  forgotPassword(input: unknown, params?: { resetUrl: string }): Promise<void>
 
   /**
    * Complete password reset using the raw token.
@@ -94,7 +116,27 @@ export interface AuthCore {
    * Accept an invitation by setting a password.
    * @throws AuthError if token is invalid or expired (400)
    */
-  acceptInvitation(input: unknown): Promise<{ user: PublicUser; token: string }>
+  acceptInvitation(input: unknown): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+
+  /**
+   * Exchange a refresh token for a new JWT + a freshly rotated refresh token.
+   * The old refresh token is invalidated atomically.
+   * @throws AuthError(401, 'INVALID_TOKEN') if the refresh token is missing, invalid, or expired
+   */
+  refresh(rawRefreshToken: string): Promise<{ user: PublicUser; token: string; refreshToken: string }>
+
+  /**
+   * Revoke a single refresh token. Idempotent — succeeds even if the token doesn't exist.
+   */
+  revoke(rawRefreshToken: string): Promise<void>
+
+  /**
+   * Revoke every outstanding refresh token for a user ("log out everywhere").
+   */
+  revokeAll(userId: string): Promise<void>
+
+  /** The resolved configuration this instance was created with. */
+  readonly config: AuthCoreConfig
 }
 
 function toPublicUser(user: {
@@ -137,6 +179,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
   const minPasswordLength = pwConfig.minLength ?? 8
   const expiresIn = session.expiresIn ?? '7d'
   const defaultRole = rbac.defaultRole ?? 'user'
+  const refreshTtlMs = parseDurationMs(session.refreshExpiresIn, DEFAULT_REFRESH_TTL_MS)
 
   const hasEmailVerification = features.includes('emailVerification')
   const hasPasswordReset = features.includes('passwordReset')
@@ -166,10 +209,11 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
       const publicUser = toPublicUser(user)
 
       const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
+      const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
 
       await callbacks.onSignUp?.(publicUser)
 
-      return { user: publicUser, token }
+      return { user: publicUser, token, refreshToken }
     },
 
     async login(input) {
@@ -186,15 +230,18 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
       const user = await db.findUserByEmail(userEmail)
       if (!user) {
+        await callbacks.onFailedLogin?.(userEmail, 'INVALID_CREDENTIALS')
         throw new AuthError('Invalid email or password', 'INVALID_CREDENTIALS', 401)
       }
 
       const valid = await verifyPassword(password, user.passwordHash)
       if (!valid) {
+        await callbacks.onFailedLogin?.(userEmail, 'INVALID_CREDENTIALS')
         throw new AuthError('Invalid email or password', 'INVALID_CREDENTIALS', 401)
       }
 
       if (hasEmailVerification && !user.emailVerified) {
+        await callbacks.onFailedLogin?.(userEmail, 'EMAIL_NOT_VERIFIED')
         throw new AuthError(
           'Please verify your email address before signing in',
           'EMAIL_NOT_VERIFIED',
@@ -204,10 +251,11 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
       const publicUser = toPublicUser(user)
       const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
+      const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
 
       await callbacks.onSignIn?.(publicUser)
 
-      return { user: publicUser, token }
+      return { user: publicUser, token, refreshToken }
     },
 
     async verifyToken(token) {
@@ -238,6 +286,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
         emailProvider: email.provider,
         from: email.from,
         verificationUrl,
+        ...(email.templates?.verifyEmail ? { template: email.templates.verifyEmail } : {}),
       })
     },
 
@@ -258,7 +307,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
       }
     },
 
-    async forgotPassword(input) {
+    async forgotPassword(input, params) {
       if (!hasPasswordReset) {
         // Silently ignore — don't reveal feature status
         return
@@ -272,6 +321,14 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
       if (!email) return
 
+      if (!params?.resetUrl) {
+        throw new AuthError(
+          'resetUrl is required when the passwordReset feature is enabled',
+          'MISSING_URL',
+          500,
+        )
+      }
+
       // Intentionally swallow errors — always return 200
       try {
         await createPasswordReset({
@@ -279,7 +336,8 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
           db,
           emailProvider: email.provider,
           from: email.from,
-          resetUrl: `${session.secret}/reset-password`, // overridden by framework adapter
+          resetUrl: params.resetUrl,
+          ...(email.templates?.resetPassword ? { template: email.templates.resetPassword } : {}),
         })
       } catch {
         // Swallow — no email enumeration
@@ -341,6 +399,7 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
           emailProvider: email.provider,
           from: email.from,
           inviteUrl,
+          ...(email.templates?.invitation ? { template: email.templates.invitation } : {}),
         })
       } catch (err) {
         if (err instanceof Error && err.message.includes('already exists')) {
@@ -376,13 +435,46 @@ export function createAuth(config: AuthCoreConfig): AuthCore {
 
         const publicUser = toPublicUser(user)
         const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
+        const refreshToken = await issueRefreshToken({ userId: user.id, db, ttlMs: refreshTtlMs })
 
-        return { user: publicUser, token }
+        return { user: publicUser, token, refreshToken }
       } catch (err) {
         if (err instanceof AuthError) throw err
         const message = err instanceof Error ? err.message : 'Invalid token'
         throw new AuthError(message, 'INVALID_TOKEN', 400)
       }
     },
+
+    async refresh(rawRefreshToken) {
+      if (!rawRefreshToken) {
+        throw new AuthError('Refresh token is required', 'INVALID_TOKEN', 401)
+      }
+      let rotated: { userId: string; newRawToken: string }
+      try {
+        rotated = await rotateRefreshToken({ rawToken: rawRefreshToken, db, ttlMs: refreshTtlMs })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Invalid refresh token'
+        throw new AuthError(message, 'INVALID_TOKEN', 401)
+      }
+      const user = await db.findUserById(rotated.userId)
+      if (!user) {
+        throw new AuthError('User no longer exists', 'INVALID_TOKEN', 401)
+      }
+      const publicUser = toPublicUser(user)
+      const token = signJwt({ sub: user.id, email: user.email, role: user.role }, session.secret, expiresIn)
+      await callbacks.onTokenRefresh?.(publicUser)
+      return { user: publicUser, token, refreshToken: rotated.newRawToken }
+    },
+
+    async revoke(rawRefreshToken) {
+      if (!rawRefreshToken) return
+      await revokeRefreshToken({ rawToken: rawRefreshToken, db })
+    },
+
+    async revokeAll(userId) {
+      await revokeAllRefreshTokensForUser({ userId, db })
+    },
+
+    config,
   }
 }

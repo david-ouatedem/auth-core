@@ -13,7 +13,7 @@
 pnpm add @authcore/core @authcore/prisma-adapter
 
 # Pick your framework integration
-pnpm add @authcore/express   # or @authcore/fastify
+pnpm add @authcore/express   # or @authcore/fastify or @authcore/nestjs
 
 # Optional: email adapter for verification & password reset
 pnpm add @authcore/resend-adapter   # or @authcore/nodemailer-adapter
@@ -105,27 +105,22 @@ model User {
   email         String   @unique
   passwordHash  String
   emailVerified Boolean  @default(false)
+  role          String   @default("user")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   tokens        Token[]
 }
 
 model Token {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   userId    String
-  type      TokenType
-  token     String    @unique
+  type      String
+  token     String   @unique
   expiresAt DateTime
-  createdAt DateTime  @default(now())
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([type, expiresAt])
-}
-
-enum TokenType {
-  EMAIL_VERIFICATION
-  PASSWORD_RESET
-  SESSION
 }
 ```
 
@@ -146,5 +141,5 @@ AUTH_SECRET="your-secret-at-least-32-characters-long"
 
 - [Configuration Reference](/configuration) — all options
 - [Adapters](/adapters/prisma) — database and email adapters
-- [Integrations](/integrations/express) — Express, Fastify, React
+- [Integrations](/integrations/express) — Express, Fastify, NestJS, React
 - [Examples](/examples/api-only) — full working apps

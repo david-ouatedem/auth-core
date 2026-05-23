@@ -4,8 +4,15 @@ export { AuthController } from './auth.controller.js'
 export { AuthGuard } from './auth.guard.js'
 export { AuthOptionalGuard } from './auth-optional.guard.js'
 export { RolesGuard } from './roles.guard.js'
+export { CsrfGuard } from './csrf.guard.js'
 export { CurrentUser, Roles, Public } from './decorators.js'
-export { AUTH_CORE } from './constants.js'
+export {
+  AUTH_CORE,
+  AUTH_MODULE_OPTIONS,
+  AUTH_COOKIE_NAME,
+  AUTH_USE_COOKIES,
+  AUTH_CSRF_ENABLED,
+} from './constants.js'
 
 // Re-export core types that consumers will need
 export type { AuthCoreConfig, PublicUser, DatabaseAdapter, EmailAdapter } from '@authcore/types'

@@ -220,7 +220,10 @@ const auth = createAuth({
   session: {
     strategy: 'jwt',
     secret: process.env.AUTH_SECRET!,
-    expiresIn: '7d',  // default
+    expiresIn: '15m',           // short-lived JWT; pair with refresh tokens
+    refreshExpiresIn: '30d',    // refresh-token expiry (0.10+)
+    cookieName: 'my_token',     // optional; default 'authcore_token'
+    csrf: true,                 // opt-in CSRF protection in cookie mode (0.10+)
   },
 
   // Email (required for email verification + password reset)
@@ -261,6 +264,8 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 | POST | `/reset-password` | Reset password with token |
 | POST | `/invite` | Invite a user by email (requires auth) |
 | POST | `/accept-invitation` | Accept invitation, set password |
+| POST | `/refresh` | Rotate refresh token, get new JWT (0.10+) |
+| POST | `/revoke` | Revoke a refresh token, idempotent (0.10+) |
 
 ## RBAC
 
@@ -337,11 +342,12 @@ See the [`@authcore/core` README](packages/core) for the adapter interfaces.
 
 ## Security
 
-- Passwords hashed with bcryptjs (12+ rounds)
-- Tokens are random, SHA-256 hashed before storage, compared with `crypto.timingSafeEqual`
+- Passwords hashed with bcryptjs (12+ rounds, silently clamped from below)
+- Tokens are random (32 bytes), SHA-256 hashed before DB storage, compared with `crypto.timingSafeEqual`
 - Password reset tokens expire in 1 hour, email verification in 24 hours, invitation tokens in 48 hours
 - Forgot password always returns 200 (prevents email enumeration)
 - All inputs validated with Zod
+- Reset/verify/invite URLs are built by framework adapters from `baseUrl + paths.*`; the JWT signing secret never appears in outbound emails (see `CHANGELOG.md` 0.9 security entry for the affected-versions advisory)
 
 ## Development
 

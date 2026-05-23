@@ -122,7 +122,11 @@ interface PrismaClientLike {
       createdAt: Date
     } | null>
     delete(args: { where: { id: string } }): Promise<unknown>
-    deleteMany(args: { where: { expiresAt: { lt: Date } } }): Promise<{ count: number }>
+    deleteMany(args: {
+      where:
+        | { expiresAt: { lt: Date } }
+        | { userId: string; type: string }
+    }): Promise<{ count: number }>
   }
 }
 
@@ -203,6 +207,10 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
 
     async deleteExpiredTokens(): Promise<void> {
       await prisma.token.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+    },
+
+    async deleteTokensByUserAndType(userId: string, type: TokenType): Promise<void> {
+      await prisma.token.deleteMany({ where: { userId, type } })
     },
   }
 }

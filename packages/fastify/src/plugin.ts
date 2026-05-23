@@ -1,6 +1,6 @@
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { AuthCore } from '@authcore/core'
-import { AuthError } from '@authcore/core'
+import { AuthError, generateCsrfToken, safeCompareTokens } from '@authcore/core'
 import '@fastify/cookie'
 import { createAuthRequired } from './hooks.js'
 
@@ -17,10 +17,12 @@ export interface PluginConfig {
     resetPassword?: string
     invite?: string
     acceptInvitation?: string
+    refresh?: string
+    revoke?: string
   }
-  /** Cookie name for monorepo/cookie mode (default: 'authcore_token') */
+  /** Cookie name for monorepo/cookie mode (default: 'authcore_token'). Refresh cookie uses `${cookieName}_refresh`, CSRF cookie uses `${cookieName}_csrf`. */
   cookieName?: string
-  /** If true, set an httpOnly cookie on login/register instead of returning token in body */
+  /** If true, set httpOnly cookies on login/register/refresh/accept-invitation instead of returning token in body */
   useCookies?: boolean
 }
 
@@ -32,16 +34,21 @@ function handleError(reply: FastifyReply, err: unknown): FastifyReply {
   return reply.code(500).send({ error: 'Internal server error' })
 }
 
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
 /**
  * Create a Fastify plugin that registers all auth routes.
  */
 export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
   const {
     baseUrl = '',
-    cookieName = 'authcore_token',
     useCookies = false,
     routes: routePaths = {},
   } = config
+  const cookieName = config.cookieName ?? auth.config.session.cookieName ?? 'authcore_token'
+  const refreshCookieName = `${cookieName}_refresh`
+  const csrfCookieName = `${cookieName}_csrf`
+  const csrfEnabled = auth.config.session.csrf === true
 
   const paths = {
     register: routePaths.register ?? '/register',
@@ -53,21 +60,61 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     resetPassword: routePaths.resetPassword ?? '/reset-password',
     invite: routePaths.invite ?? '/invite',
     acceptInvitation: routePaths.acceptInvitation ?? '/accept-invitation',
+    refresh: routePaths.refresh ?? '/refresh',
+    revoke: routePaths.revoke ?? '/revoke',
   }
 
   const isProduction = process.env['NODE_ENV'] === 'production'
   const authRequired = createAuthRequired(auth, cookieName)
 
+  function setAuthCookies(reply: FastifyReply, token: string, refreshToken: string): void {
+    void reply.setCookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+    void reply.setCookie(refreshCookieName, refreshToken, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+    if (csrfEnabled) {
+      void reply.setCookie(csrfCookieName, generateCsrfToken(), {
+        httpOnly: false,
+        sameSite: 'lax',
+        secure: isProduction,
+        path: '/',
+      })
+    }
+  }
+
+  function clearAuthCookies(reply: FastifyReply): void {
+    void reply.clearCookie(cookieName, { path: '/' })
+    void reply.clearCookie(refreshCookieName, { path: '/' })
+    if (csrfEnabled) void reply.clearCookie(csrfCookieName, { path: '/' })
+  }
+
+  function readRefreshToken(request: FastifyRequest): string | null {
+    const body = request.body as { refreshToken?: string } | undefined
+    if (body?.refreshToken) return body.refreshToken
+    return request.cookies[refreshCookieName] ?? null
+  }
+
   return async function authPlugin(fastify: FastifyInstance) {
+    if (csrfEnabled) {
+      fastify.addHook('preHandler', async (request, reply) => {
+        if (!STATE_CHANGING_METHODS.has(request.method.toUpperCase())) return
+        const cookieToken = request.cookies[csrfCookieName]
+        if (!cookieToken) return // first request — no CSRF cookie yet
+        const headerToken = request.headers['x-csrf-token']
+        const headerValue = Array.isArray(headerToken) ? headerToken[0] : headerToken
+        if (!headerValue || !safeCompareTokens(cookieToken, headerValue)) {
+          return reply.code(403).send({ error: 'CSRF token missing or invalid', code: 'CSRF_INVALID' })
+        }
+      })
+    }
+
     // POST /register
     fastify.post(paths.register, async (request, reply) => {
       try {
-        const { user, token } = await auth.register(request.body)
+        const { user, token, refreshToken } = await auth.register(request.body)
         if (useCookies) {
-          void reply.setCookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+          setAuthCookies(reply, token, refreshToken)
           return reply.code(201).send({ user })
         }
-        return reply.code(201).send({ user, token })
+        return reply.code(201).send({ user, token, refreshToken })
       } catch (err) {
         return handleError(reply, err)
       }
@@ -76,22 +123,56 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     // POST /login
     fastify.post(paths.login, async (request, reply) => {
       try {
-        const { user, token } = await auth.login(request.body)
+        const { user, token, refreshToken } = await auth.login(request.body)
         if (useCookies) {
-          void reply.setCookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+          setAuthCookies(reply, token, refreshToken)
           return reply.send({ user })
         }
-        return reply.send({ user, token })
+        return reply.send({ user, token, refreshToken })
       } catch (err) {
         return handleError(reply, err)
       }
     })
 
-    // POST /logout
-    fastify.post(paths.logout, async (_request, reply) => {
-      if (useCookies) {
-        void reply.clearCookie(cookieName, { path: '/' })
+    // POST /refresh
+    fastify.post(paths.refresh, async (request, reply) => {
+      try {
+        const rawRefresh = readRefreshToken(request)
+        if (!rawRefresh) {
+          return reply.code(401).send({ error: 'Refresh token is required', code: 'INVALID_TOKEN' })
+        }
+        const { user, token, refreshToken } = await auth.refresh(rawRefresh)
+        if (useCookies) {
+          setAuthCookies(reply, token, refreshToken)
+          return reply.send({ user })
+        }
+        return reply.send({ user, token, refreshToken })
+      } catch (err) {
+        return handleError(reply, err)
       }
+    })
+
+    // POST /revoke
+    fastify.post(paths.revoke, async (request, reply) => {
+      try {
+        const rawRefresh = readRefreshToken(request)
+        if (rawRefresh) await auth.revoke(rawRefresh)
+        if (useCookies) clearAuthCookies(reply)
+        return reply.send({ message: 'Revoked' })
+      } catch (err) {
+        return handleError(reply, err)
+      }
+    })
+
+    // POST /logout — revoke refresh + clear cookies
+    fastify.post(paths.logout, async (request, reply) => {
+      try {
+        const rawRefresh = readRefreshToken(request)
+        if (rawRefresh) await auth.revoke(rawRefresh)
+      } catch {
+        // Swallow — logout best-effort
+      }
+      if (useCookies) clearAuthCookies(reply)
       return reply.send({ message: 'Logged out successfully' })
     })
 
@@ -113,7 +194,8 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     // POST /forgot-password — always 200
     fastify.post(paths.forgotPassword, async (request, reply) => {
       try {
-        await auth.forgotPassword(request.body)
+        const resetUrl = `${baseUrl}${paths.resetPassword}`
+        await auth.forgotPassword(request.body, { resetUrl })
       } catch {
         // Intentionally swallow — no email enumeration
       }
@@ -144,12 +226,12 @@ export function createAuthPlugin(auth: AuthCore, config: PluginConfig = {}) {
     // POST /accept-invitation (public)
     fastify.post(paths.acceptInvitation, async (request, reply) => {
       try {
-        const { user, token } = await auth.acceptInvitation(request.body)
+        const { user, token, refreshToken } = await auth.acceptInvitation(request.body)
         if (useCookies) {
-          void reply.setCookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure: isProduction, path: '/' })
+          setAuthCookies(reply, token, refreshToken)
           return reply.send({ user })
         }
-        return reply.send({ user, token })
+        return reply.send({ user, token, refreshToken })
       } catch (err) {
         return handleError(reply, err)
       }

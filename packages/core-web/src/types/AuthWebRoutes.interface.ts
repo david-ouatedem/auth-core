@@ -8,4 +8,6 @@ export interface AuthWebRoutesInterface {
   resetPassword?: string
   invite?: string
   acceptInvitation?: string
+  refresh?: string
+  revoke?: string
 }

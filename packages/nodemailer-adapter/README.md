@@ -25,7 +25,7 @@ const auth = createAuth({
     }),
     from: 'auth@yourdomain.com',
   },
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
 })
 ```
 
