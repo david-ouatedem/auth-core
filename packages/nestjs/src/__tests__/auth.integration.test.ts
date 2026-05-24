@@ -691,9 +691,11 @@ describeIf('@authcore/nestjs — CSRF (opt-in)', () => {
       .set('Cookie', cookieHeader)
       .set('X-CSRF-Token', csrfValue)
       .send({})
-    // CSRF passed → auth-level INVALID_TOKEN (no refresh body)
-    expect(allowed.status).toBe(401)
-    expect(allowed.body.code).toBe('INVALID_TOKEN')
+    // CSRF passed AND the refresh cookie carried a refresh token, so refresh
+    // completed successfully. The signal: status != 403 (which would mean
+    // CSRF blocked the request).
+    expect(allowed.status).toBe(200)
+    expect(allowed.body.user.email).toBe('csrf3@example.com')
   })
 
   it('GET requests skip the CSRF check', async () => {
@@ -727,6 +729,14 @@ function makeFakeNestProvider(opts: { email?: string; emailVerified?: boolean } 
 
 describeIf('@authcore/nestjs OAuth (0.11)', () => {
   let oauthApp: INestApplication
+
+  // Top-level describeIf doesn't inherit the main suite's beforeEach. Without
+  // this, prior tests leak users + oauth accounts across these tests.
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.oAuthAccount.deleteMany()
+    await prisma.user.deleteMany()
+  })
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({

@@ -25,11 +25,13 @@ dotenv.config({ path: resolve(process.cwd(), '.env') })
  * Mirrors packages/core/src/__tests__/helpers/captureEmailAdapter.ts but inlined
  * here so we don't depend on test-only paths in @authcore/core's exports field.
  */
+type CapturedEmail = { from: string; to: string; subject: string; html: string; text: string }
 function createCaptureEmail(): {
   provider: EmailAdapter
-  sent: Array<{ from: string; to: string; subject: string; html: string; text: string }>
+  sent: CapturedEmail[]
+  last(): CapturedEmail | undefined
 } {
-  const sent: Array<{ from: string; to: string; subject: string; html: string; text: string }> = []
+  const sent: CapturedEmail[] = []
   return {
     provider: {
       async send(options) {
@@ -37,6 +39,9 @@ function createCaptureEmail(): {
       },
     },
     sent,
+    last() {
+      return sent[sent.length - 1]
+    },
   }
 }
 
@@ -761,10 +766,11 @@ describeIf('@authcore/express — CSRF (opt-in)', () => {
       .set('Cookie', cookieHeader)
       .set('X-CSRF-Token', csrfValue)
       .send({})
-    // Note: refresh body is empty but the request itself was NOT blocked by CSRF;
-    // it returns 401 from missing refresh token, which is the auth path, not 403 from CSRF.
-    expect(allowed.status).toBe(401)
-    expect(allowed.body.code).toBe('INVALID_TOKEN')
+    // CSRF check passed, AND the refresh cookie carried the refresh token, so the
+    // request completes successfully and a new session is minted. The signal we care
+    // about: status != 403 (which would mean CSRF blocked it).
+    expect(allowed.status).toBe(200)
+    expect(allowed.body.user.email).toBe('csrf3@example.com')
   })
 
   it('GET requests skip CSRF check', async () => {
@@ -849,6 +855,16 @@ function makeFakeProvider(opts: FakeProviderOptions = {}) {
 }
 
 describeIf('@authcore/express OAuth (0.11)', () => {
+  // Top-level describeIf blocks DON'T inherit each other's beforeEach. Without
+  // this, the prior happy-path test leaves an oauth_account with
+  // providerAccountId='remote-user-1', and the next test's findOAuthAccount
+  // returns it — skipping the 409 unverified-email check.
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.oAuthAccount.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
   it('GET /auth/oauth/google → 302 redirect to provider authorize URL', async () => {
     const auth = createAuth({
       db: prismaAdapter(prisma),
@@ -1008,6 +1024,12 @@ describeIf('@authcore/express OAuth (0.11)', () => {
 // ---- 0.12: Magic-link ----
 
 describeIf('@authcore/express magic-link (0.12)', () => {
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.oAuthAccount.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
   it('POST /auth/magic-link sends an email containing the consume URL + token', async () => {
     const capture = createCaptureEmail()
     const auth = createAuth({

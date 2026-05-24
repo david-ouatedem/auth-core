@@ -695,9 +695,11 @@ describeIf('@authcore/fastify — CSRF (opt-in)', () => {
       headers: { cookie: cookieHeader, 'x-csrf-token': csrfValue },
       payload: {},
     })
-    // CSRF check passed; refresh body empty → auth-level 401
-    expect(allowed.statusCode).toBe(401)
-    expect(allowed.json().code).toBe('INVALID_TOKEN')
+    // CSRF passed AND the refresh cookie carried a refresh token, so refresh
+    // completed successfully. The signal: status != 403 (which would mean
+    // CSRF blocked the request).
+    expect(allowed.statusCode).toBe(200)
+    expect(allowed.json().user.email).toBe('csrf3@example.com')
     await csrfApp.close()
   })
 
@@ -745,6 +747,14 @@ function makeFakeFastifyProvider(opts: { email?: string; emailVerified?: boolean
 }
 
 describeIf('@authcore/fastify OAuth (0.11)', () => {
+  // Top-level describeIf doesn't inherit the main suite's beforeEach. Without
+  // this, prior tests leak users + oauth accounts across these tests.
+  beforeEach(async () => {
+    await prisma.token.deleteMany()
+    await prisma.oAuthAccount.deleteMany()
+    await prisma.user.deleteMany()
+  })
+
   it('GET /auth/oauth/google redirects to provider, callback completes flow (api mode)', async () => {
     const auth = createAuth({
       db: prismaAdapter(prisma),
