@@ -42,6 +42,7 @@ export default defineConfig({
       {
         text: 'Security',
         items: [
+          { text: 'Threat Model', link: '/security/threat-model' },
           { text: 'Refresh Tokens', link: '/security/refresh-tokens' },
           { text: 'CSRF', link: '/security/csrf' },
           { text: 'OAuth', link: '/security/oauth' },
