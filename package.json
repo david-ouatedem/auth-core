@@ -4,8 +4,10 @@
   "version": "0.6.0",
   "description": "Devise-inspired, framework-agnostic authentication library for the JS ecosystem",
   "scripts": {
-    "build": "pnpm --filter @authcore/types build && pnpm --filter @authcore/core build && pnpm --filter @authcore/core-web build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/nestjs build && pnpm --filter @authcore/react build && pnpm --filter create-authcore-app build",
-    "publish:all": "pnpm -r publish --access public",
+    "build": "pnpm --filter @authcore/types build && pnpm --filter @authcore/core build && pnpm --filter @authcore/core-web build && pnpm --filter @authcore/prisma-adapter build && pnpm --filter @authcore/drizzle-adapter build && pnpm --filter @authcore/resend-adapter build && pnpm --filter @authcore/nodemailer-adapter build && pnpm --filter @authcore/express build && pnpm --filter @authcore/fastify build && pnpm --filter @authcore/nestjs build && pnpm --filter @authcore/react build && pnpm --filter @authcore/nextjs build && pnpm --filter create-authcore-app build",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm -w run build && changeset publish",
     "publish:dry": "pnpm -r publish --access public --dry-run",
     "dev": "pnpm --recursive --parallel dev",
     "test": "vitest run --reporter=verbose",
@@ -16,6 +18,7 @@
     "docs:build": "pnpm --filter authcore-docs build"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^20.0.0",
     "prisma": "5.22.0",
     "typescript": "^5.4.0",
@@ -29,6 +32,7 @@
     "onlyBuiltDependencies": [
       "@prisma/client",
       "@prisma/engines",
+      "better-sqlite3",
       "esbuild",
       "prisma"
     ]

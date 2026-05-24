@@ -1,7 +1,9 @@
-import type { DatabaseAdapter, EmailAdapter, Token } from '@authcore/types'
+import type { DatabaseAdapter, EmailAdapter, EmailTemplate, Token } from '@authcore/types'
 import { generateOpaqueToken, hashToken } from '../utils/token.js'
+import { defaultVerifyEmailTemplate } from './templates.js'
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const EMAIL_VERIFICATION_TTL_HOURS = 24
 
 /**
  * Create an email verification token and send the verification email.
@@ -15,8 +17,12 @@ export async function createEmailVerification(params: {
   emailProvider: EmailAdapter
   from: string
   verificationUrl: string
+  template?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
 }): Promise<string> {
-  const { userId, email, db, emailProvider, from, verificationUrl } = params
+  const {
+    userId, email, db, emailProvider, from, verificationUrl,
+    template = defaultVerifyEmailTemplate,
+  } = params
 
   const rawToken = generateOpaqueToken()
   const hashedToken = hashToken(rawToken)
@@ -29,19 +35,14 @@ export async function createEmailVerification(params: {
   })
 
   const link = `${verificationUrl}?token=${rawToken}`
+  const rendered = template({ email, link, ttlHours: EMAIL_VERIFICATION_TTL_HOURS })
 
   await emailProvider.send({
     from,
     to: email,
-    subject: 'Verify your email address',
-    html: `
-      <p>Hello,</p>
-      <p>Please verify your email address by clicking the link below:</p>
-      <p><a href="${link}">${link}</a></p>
-      <p>This link expires in 24 hours.</p>
-      <p>If you did not create an account, you can ignore this email.</p>
-    `,
-    text: `Please verify your email by visiting: ${link}\n\nThis link expires in 24 hours.`,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
   })
 
   return rawToken

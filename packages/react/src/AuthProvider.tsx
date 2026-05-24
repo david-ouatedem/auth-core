@@ -1,6 +1,12 @@
 import { createContext, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { AuthWebService } from '@authcore/core-web'
-import type { AuthWebRoutesInterface, AuthResponse, AuthResponseTransformers } from '@authcore/core-web'
+import type {
+  AuthWebRoutesInterface,
+  AuthResponse,
+  AuthResponseTransformers,
+  SignInResult,
+  TwoFactorSetupResult,
+} from '@authcore/core-web'
 import type { PublicUser } from '@authcore/types'
 
 export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
@@ -9,7 +15,13 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
   isAuthenticated: boolean
   error: string | null
   signUp(email: string, password: string): Promise<AuthResponse<TUser>>
-  signIn(email: string, password: string): Promise<AuthResponse<TUser>>
+  /**
+   * Sign in with email + password. Returns a discriminated union — narrow with
+   * `'requires2FA' in result` to handle 2FA-enabled accounts. When it's a
+   * challenge, pass the challengeToken to `verifyTwoFactor` (or
+   * `useRecoveryCode`) along with the user's code.
+   */
+  signIn(email: string, password: string): Promise<SignInResult<TUser>>
   signOut(): Promise<void>
   verifyEmail(token: string): Promise<void>
   forgotPassword(email: string): Promise<void>
@@ -17,6 +29,40 @@ export interface AuthContextValue<TUser extends PublicUser = PublicUser> {
   invite(email: string, role?: string): Promise<void>
   acceptInvitation(token: string, password: string): Promise<AuthResponse<TUser>>
   refreshUser(): Promise<void>
+  /** Exchange the current refresh token for a fresh JWT + rotated refresh token. */
+  refresh(): Promise<AuthResponse<TUser>>
+  /** Revoke the current refresh token server-side and clear local state. */
+  revokeSession(): Promise<void>
+  /** Build the OAuth start URL for a provider (e.g. for use in a styled `<a>` tag). */
+  oauthStartUrl(providerId: string): string
+  /** Navigate the current window to the OAuth start URL for a provider. */
+  signInWithProvider(providerId: string): void
+  /**
+   * Handle the OAuth callback on the landing page the server redirected to.
+   * In cookie mode fetches `/me`. In api mode reads the token from the URL fragment.
+   */
+  handleOAuthCallback(): Promise<void>
+  /**
+   * Start a passwordless sign-in by sending a magic-link email. Resolves
+   * successfully whether the email exists or not (enumeration-safe).
+   */
+  signInWithMagicLink(email: string): Promise<void>
+  /**
+   * Handle the magic-link landing page. Exchanges `?token=…` for a session
+   * via the server (when present), or reads `#token=…&refreshToken=…` from
+   * the fragment (api-mode redirect), then populates auth state.
+   */
+  handleMagicLinkCallback(): Promise<void>
+  /** Begin 2FA enrollment. Returns secret + otpauth URL + 10 recovery codes. */
+  setupTwoFactor(): Promise<TwoFactorSetupResult>
+  /** Confirm 2FA enrollment by verifying the first authenticator code. */
+  enableTwoFactor(code: string): Promise<void>
+  /** Disable 2FA. Requires the user's current password. */
+  disableTwoFactor(password: string): Promise<void>
+  /** Complete a 2FA-pending sign-in with a TOTP code. */
+  verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
+  /** Complete a 2FA-pending sign-in with a single-use recovery code. */
+  useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
 }
 
 // Context is typed with the base PublicUser. useAuth<TUser>() narrows via a type assertion,
@@ -74,6 +120,7 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
           persistSession,
           storageKey,
           token: '',
+          refreshToken: null,
           user: null,
           error: null,
           isLoading: true,
@@ -96,6 +143,11 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
   const state = useSyncExternalStore(
     (cb) => service.subscribe(cb),
     () => service.getState(),
+    // Server snapshot — Next.js / static SSR call this during prerender. We
+    // return the initial unauthenticated state (no cookies/localStorage are
+    // available server-side anyway). The client immediately re-runs
+    // refreshUser() in the useEffect below to populate the real session.
+    () => service.getState(),
   )
 
   useEffect(() => {
@@ -116,6 +168,18 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
     invite: (email, role) => service.invite(email, role),
     acceptInvitation: (token, password) => service.acceptInvitation(token, password),
     refreshUser: () => service.refreshUser(),
+    refresh: () => service.refresh(),
+    revokeSession: () => service.revokeSession(),
+    oauthStartUrl: (providerId) => service.oauthStartUrl(providerId),
+    signInWithProvider: (providerId) => service.signInWithProvider(providerId),
+    handleOAuthCallback: () => service.handleOAuthCallback(),
+    signInWithMagicLink: (email) => service.signInWithMagicLink(email),
+    handleMagicLinkCallback: () => service.handleMagicLinkCallback(),
+    setupTwoFactor: () => service.setupTwoFactor(),
+    enableTwoFactor: (code) => service.enableTwoFactor(code),
+    disableTwoFactor: (password) => service.disableTwoFactor(password),
+    verifyTwoFactor: (challengeToken, code) => service.verifyTwoFactor(challengeToken, code),
+    useRecoveryCode: (challengeToken, code) => service.useRecoveryCode(challengeToken, code),
   }
 
   return (

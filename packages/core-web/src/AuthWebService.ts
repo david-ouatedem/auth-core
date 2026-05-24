@@ -1,13 +1,18 @@
 import type { AuthWebRoutesInterface } from './types/AuthWebRoutes.interface.js'
-import type { AuthResponse, AuthWebServiceResponseInterface } from './types/AuthWebService.response.js'
+import type {
+  AuthResponse,
+  AuthWebServiceResponseInterface,
+  SignInResult,
+  TwoFactorSetupResult,
+} from './types/AuthWebService.response.js'
 import type { AuthWebStateInterface } from './types/AuthWebState.interface.js'
 import type { HttpClient } from './types/HttpClients.interface.js'
 import { createFetchAuthClient } from './http-client/createFetchAuthClient.js'
 import type { PublicUser } from '@authcore/types'
 
 export interface AuthResponseTransformers<TUser extends PublicUser = PublicUser> {
-  /** Map your backend's sign-in / sign-up / accept-invitation response to { user, token? } */
-  transformAuthResponse?: (raw: unknown) => { user: TUser; token?: string }
+  /** Map your backend's sign-in / sign-up / accept-invitation / refresh response to { user, token?, refreshToken? } */
+  transformAuthResponse?: (raw: unknown) => { user: TUser; token?: string; refreshToken?: string }
   /** Map your backend's /me response to a user object */
   transformUser?: (raw: unknown) => TUser
   /** Map your backend's error body to an error message string */
@@ -25,6 +30,16 @@ interface ResolvedRoutes {
   resetPassword: string
   invite: string
   acceptInvitation: string
+  refresh: string
+  revoke: string
+  oauthStart: string
+  sendMagicLink: string
+  consumeMagicLink: string
+  setupTwoFactor: string
+  enableTwoFactor: string
+  disableTwoFactor: string
+  verifyTwoFactor: string
+  useRecoveryCode: string
 }
 
 export class AuthWebService<TUser extends PublicUser = PublicUser>
@@ -48,6 +63,10 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       if (stored) {
         this.state.token = stored
       }
+      const storedRefresh = localStorage.getItem(`${this.state.storageKey ?? 'authcore_token'}_refresh`)
+      if (storedRefresh) {
+        this.state.refreshToken = storedRefresh
+      }
     }
 
     this.client = options?.httpClient ?? createFetchAuthClient({
@@ -67,28 +86,47 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       resetPassword: routes?.resetPassword ?? '/reset-password',
       invite: routes?.invite ?? '/invite',
       acceptInvitation: routes?.acceptInvitation ?? '/accept-invitation',
+      refresh: routes?.refresh ?? '/refresh',
+      revoke: routes?.revoke ?? '/revoke',
+      oauthStart: routes?.oauthStart ?? '/oauth/:provider',
+      sendMagicLink: routes?.sendMagicLink ?? '/magic-link',
+      consumeMagicLink: routes?.consumeMagicLink ?? '/magic-link/consume',
+      setupTwoFactor: routes?.setupTwoFactor ?? '/2fa/setup',
+      enableTwoFactor: routes?.enableTwoFactor ?? '/2fa/enable',
+      disableTwoFactor: routes?.disableTwoFactor ?? '/2fa/disable',
+      verifyTwoFactor: routes?.verifyTwoFactor ?? '/2fa/verify',
+      useRecoveryCode: routes?.useRecoveryCode ?? '/2fa/recovery',
     }
 
     this.listeners = new Set()
   }
 
-  async signIn({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {
+  async signIn({ email, password }: { email: string; password: string }): Promise<SignInResult<TUser>> {
     try {
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
       const raw = await this.client.post<unknown>(this.paths.login, { email, password })
+
+      // 2FA challenge: server returns `{ requires2FA: true, challengeToken }`.
+      // Do NOT populate auth state — the user isn't signed in yet.
+      if (raw && typeof raw === 'object' && (raw as { requires2FA?: boolean }).requires2FA) {
+        return raw as { requires2FA: true; challengeToken: string }
+      }
+
       const response = this.transformers.transformAuthResponse
         ? this.transformers.transformAuthResponse(raw)
-        : raw as AuthResponse<TUser>
+        : (raw as AuthResponse<TUser>)
       this.state = {
         ...this.state,
         user: response.user,
         token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
         isAuthenticated: true,
         isLoading: false,
       }
       this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
       this.notifyListeners()
       return response
     } catch (error) {
@@ -98,6 +136,55 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       this.state = { ...this.state, isLoading: false }
       this.notifyListeners()
     }
+  }
+
+  async setupTwoFactor(): Promise<TwoFactorSetupResult> {
+    return this.client.post<TwoFactorSetupResult>(this.paths.setupTwoFactor, {})
+  }
+
+  async enableTwoFactor(code: string): Promise<void> {
+    await this.client.post(this.paths.enableTwoFactor, { code })
+  }
+
+  async disableTwoFactor(password: string): Promise<void> {
+    await this.client.post(this.paths.disableTwoFactor, { password })
+  }
+
+  async verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>> {
+    const raw = await this.client.post<unknown>(this.paths.verifyTwoFactor, {
+      challengeToken,
+      code,
+    })
+    return this.applySessionResponse(raw)
+  }
+
+  async useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>> {
+    const raw = await this.client.post<unknown>(this.paths.useRecoveryCode, {
+      challengeToken,
+      code,
+    })
+    return this.applySessionResponse(raw)
+  }
+
+  /**
+   * Shared helper: take a raw server response that we know is a full session
+   * (post-2FA verify or recovery), populate auth state, and return it.
+   */
+  private applySessionResponse(raw: unknown): AuthResponse<TUser> {
+    const response = this.transformers.transformAuthResponse
+      ? this.transformers.transformAuthResponse(raw)
+      : (raw as AuthResponse<TUser>)
+    this.state = {
+      ...this.state,
+      user: response.user,
+      token: response.token ?? '',
+      refreshToken: response.refreshToken ?? null,
+      isAuthenticated: true,
+    }
+    this.setToken(response.token ?? null)
+    this.setRefreshToken(response.refreshToken ?? null)
+    this.notifyListeners()
+    return response
   }
 
   async signUp({ email, password }: { email: string; password: string }): Promise<AuthResponse<TUser>> {
@@ -113,10 +200,12 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
         ...this.state,
         user: response.user,
         token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
         isAuthenticated: true,
         isLoading: false,
       }
       this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
       this.notifyListeners()
       return response
     } catch (error) {
@@ -133,9 +222,20 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       this.state = { ...this.state, isLoading: true }
       this.notifyListeners()
 
-      await this.client.post(this.paths.logout)
-      this.state = { ...this.state, user: null, token: '', isAuthenticated: false, isLoading: false }
+      // Send refresh token in body so the server can revoke it (api mode);
+      // cookie-mode clients send the cookie automatically.
+      const body = this.state.refreshToken ? { refreshToken: this.state.refreshToken } : undefined
+      await this.client.post(this.paths.logout, body)
+      this.state = {
+        ...this.state,
+        user: null,
+        token: '',
+        refreshToken: null,
+        isAuthenticated: false,
+        isLoading: false,
+      }
       this.setToken(null)
+      this.setRefreshToken(null)
       this.notifyListeners()
     } catch (error) {
       this.state = { ...this.state, error: error instanceof Error ? error.message : 'Unknown error' }
@@ -223,10 +323,12 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
         ...this.state,
         user: response.user,
         token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
         isAuthenticated: true,
         isLoading: false,
       }
       this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
       this.notifyListeners()
       return response
     } catch (error) {
@@ -236,6 +338,159 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
       this.state = { ...this.state, isLoading: false }
       this.notifyListeners()
     }
+  }
+
+  async refresh(): Promise<AuthResponse<TUser>> {
+    try {
+      // In cookie mode the browser carries the refresh token; in api mode we send it in the body.
+      const body = this.state.refreshToken ? { refreshToken: this.state.refreshToken } : undefined
+      const raw = await this.client.post<unknown>(this.paths.refresh, body)
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : raw as AuthResponse<TUser>
+      this.state = {
+        ...this.state,
+        user: response.user,
+        token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
+        isAuthenticated: true,
+      }
+      this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
+      this.notifyListeners()
+      return response
+    } catch (error) {
+      // Refresh failure = client must re-authenticate. Clear state.
+      this.state = {
+        ...this.state,
+        user: null,
+        token: '',
+        refreshToken: null,
+        isAuthenticated: false,
+        error: error instanceof Error ? error.message : 'Refresh failed',
+      }
+      this.setToken(null)
+      this.setRefreshToken(null)
+      this.notifyListeners()
+      throw error
+    }
+  }
+
+  async revokeSession(): Promise<void> {
+    try {
+      const body = this.state.refreshToken ? { refreshToken: this.state.refreshToken } : undefined
+      await this.client.post(this.paths.revoke, body)
+    } catch {
+      // Best-effort
+    }
+    this.state = {
+      ...this.state,
+      user: null,
+      token: '',
+      refreshToken: null,
+      isAuthenticated: false,
+    }
+    this.setToken(null)
+    this.setRefreshToken(null)
+    this.notifyListeners()
+  }
+
+  oauthStartUrl(providerId: string): string {
+    const path = this.paths.oauthStart.replace(':provider', encodeURIComponent(providerId))
+    return `${this.state.baseUrl}${path}`
+  }
+
+  signInWithProvider(providerId: string): void {
+    if (typeof window === 'undefined') return
+    window.location.href = this.oauthStartUrl(providerId)
+  }
+
+  async handleOAuthCallback(): Promise<void> {
+    if (typeof window === 'undefined') return
+
+    // API mode: server may have redirected with #token=...&refreshToken=... fragment.
+    if (this.state.mode === 'api' && window.location.hash.length > 1) {
+      const fragment = window.location.hash.slice(1)
+      const params = new URLSearchParams(fragment)
+      const token = params.get('token')
+      const refreshToken = params.get('refreshToken')
+      if (token) {
+        this.state = {
+          ...this.state,
+          token,
+          refreshToken: refreshToken ?? null,
+          isAuthenticated: true,
+        }
+        this.setToken(token)
+        this.setRefreshToken(refreshToken)
+        // Strip the fragment so the token isn't sitting in history/the address bar.
+        const url = new URL(window.location.href)
+        url.hash = ''
+        window.history.replaceState({}, '', url.toString())
+      }
+    }
+    // Both modes: fetch /me to populate the user.
+    await this.refreshUser()
+  }
+
+  async signInWithMagicLink(email: string): Promise<void> {
+    await this.client.post(this.paths.sendMagicLink, { email })
+  }
+
+  async handleMagicLinkCallback(): Promise<void> {
+    if (typeof window === 'undefined') return
+
+    const url = new URL(window.location.href)
+    const queryToken = url.searchParams.get('token')
+
+    // Case A: user clicked the email link directly — token is in ?token=…
+    // and we need to exchange it via the server.
+    if (queryToken) {
+      const raw = await this.client.get<unknown>(
+        `${this.paths.consumeMagicLink}?token=${encodeURIComponent(queryToken)}`,
+      )
+      const response = this.transformers.transformAuthResponse
+        ? this.transformers.transformAuthResponse(raw)
+        : (raw as AuthResponse<TUser>)
+      this.state = {
+        ...this.state,
+        user: response.user,
+        token: response.token ?? '',
+        refreshToken: response.refreshToken ?? null,
+        isAuthenticated: true,
+      }
+      this.setToken(response.token ?? null)
+      this.setRefreshToken(response.refreshToken ?? null)
+      // Strip ?token= from the URL so it doesn't sit in browser history.
+      url.searchParams.delete('token')
+      window.history.replaceState({}, '', url.toString())
+      this.notifyListeners()
+      return
+    }
+
+    // Case B: server already consumed the token and redirected us here with
+    // tokens in the fragment (api mode + magicLinkSuccessRedirect).
+    if (this.state.mode === 'api' && window.location.hash.length > 1) {
+      const fragment = window.location.hash.slice(1)
+      const params = new URLSearchParams(fragment)
+      const token = params.get('token')
+      const refreshToken = params.get('refreshToken')
+      if (token) {
+        this.state = {
+          ...this.state,
+          token,
+          refreshToken: refreshToken ?? null,
+          isAuthenticated: true,
+        }
+        this.setToken(token)
+        this.setRefreshToken(refreshToken)
+        url.hash = ''
+        window.history.replaceState({}, '', url.toString())
+      }
+    }
+
+    // Both modes: populate the user.
+    await this.refreshUser()
   }
 
   async refreshUser(): Promise<void> {
@@ -271,6 +526,17 @@ export class AuthWebService<TUser extends PublicUser = PublicUser>
         localStorage.setItem(this.state.storageKey, token)
       } else {
         localStorage.removeItem(this.state.storageKey)
+      }
+    }
+  }
+
+  private setRefreshToken = (refreshToken: string | null) => {
+    if (this.state.mode === 'api' && this.state.persistSession) {
+      const key = `${this.state.storageKey}_refresh`
+      if (refreshToken) {
+        localStorage.setItem(key, refreshToken)
+      } else {
+        localStorage.removeItem(key)
       }
     }
   }

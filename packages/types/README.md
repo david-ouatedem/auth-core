@@ -34,9 +34,11 @@ Frontend packages like `@authcore/react` and `@authcore/core-web` only need type
 ### Configuration types
 
 - `AuthCoreConfig` -- top-level configuration object
-- `SessionConfig` -- JWT session settings
+- `SessionConfig` -- JWT session settings (`strategy`, `secret`, `expiresIn`, `cookieName`)
 - `EmailConfig` -- email provider settings
 - `AuthCallbacks` -- optional lifecycle callbacks (`onSignUp`, `onSignIn`, etc.)
+
+`SessionConfig.cookieName` (added in 0.9) is the single source of truth for the auth cookie name across all framework adapters. Defaults to `'authcore_token'`.
 
 ## Usage
 

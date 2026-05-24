@@ -9,6 +9,7 @@ export default defineConfig({
       { text: 'Guide', link: '/getting-started' },
       { text: 'Adapters', link: '/adapters/prisma' },
       { text: 'Integrations', link: '/integrations/express' },
+      { text: 'Security', link: '/security/refresh-tokens' },
       { text: 'Examples', link: '/examples/api-only' },
     ],
     sidebar: [
@@ -23,6 +24,7 @@ export default defineConfig({
         text: 'Adapters',
         items: [
           { text: 'Prisma', link: '/adapters/prisma' },
+          { text: 'Drizzle', link: '/adapters/drizzle' },
           { text: 'Resend', link: '/adapters/resend' },
           { text: 'Nodemailer', link: '/adapters/nodemailer' },
         ],
@@ -30,6 +32,7 @@ export default defineConfig({
       {
         text: 'Integrations',
         items: [
+          { text: 'Next.js', link: '/integrations/nextjs' },
           { text: 'Express', link: '/integrations/express' },
           { text: 'Fastify', link: '/integrations/fastify' },
           { text: 'NestJS', link: '/integrations/nestjs' },
@@ -37,11 +40,30 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Security',
+        items: [
+          { text: 'Threat Model', link: '/security/threat-model' },
+          { text: 'Refresh Tokens', link: '/security/refresh-tokens' },
+          { text: 'CSRF', link: '/security/csrf' },
+          { text: 'OAuth', link: '/security/oauth' },
+          { text: 'Magic-Link Login', link: '/security/magic-link' },
+          { text: 'Two-Factor (TOTP)', link: '/security/two-factor' },
+          { text: 'Email Templates', link: '/security/email-templates' },
+        ],
+      },
+      {
         text: 'Examples',
         items: [
+          { text: 'Next.js (full demo)', link: '/examples/nextjs' },
           { text: 'API-Only', link: '/examples/api-only' },
           { text: 'Monorepo', link: '/examples/monorepo' },
           { text: 'Frontend-Only', link: '/examples/frontend-only' },
+        ],
+      },
+      {
+        text: 'Upgrading',
+        items: [
+          { text: '0.x → 1.0', link: '/migration/0.x-to-1.0' },
         ],
       },
     ],

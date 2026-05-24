@@ -205,3 +205,88 @@ describe('createFetchAuthClient', () => {
     }
   });
 });
+
+// ---- 0.10: CSRF auto-header ----
+
+describe('createFetchAuthClient — CSRF auto-header', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    // Make document.cookie writable for tests
+    vi.stubGlobal('document', {
+      cookie: '',
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('adds X-CSRF-Token header on POST when csrf cookie is present', async () => {
+    vi.stubGlobal('document', { cookie: 'authcore_token_csrf=csrf-value-123; foo=bar' });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'cookie',
+      getToken: () => null,
+    });
+
+    await client.post('/refresh', {});
+
+    const init = mockFetch.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBe('csrf-value-123');
+  });
+
+  it('omits X-CSRF-Token when csrf cookie is absent', async () => {
+    vi.stubGlobal('document', { cookie: '' });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'cookie',
+      getToken: () => null,
+    });
+
+    await client.post('/refresh', {});
+
+    const init = mockFetch.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBeUndefined();
+  });
+
+  it('does NOT add X-CSRF-Token on GET (safe method)', async () => {
+    vi.stubGlobal('document', { cookie: 'authcore_token_csrf=value' });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'cookie',
+      getToken: () => null,
+    });
+
+    await client.get('/me');
+
+    const init = mockFetch.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBeUndefined();
+  });
+
+  it('respects custom csrfCookieName', async () => {
+    vi.stubGlobal('document', { cookie: 'my_csrf=custom-value; other=ignored' });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const client = createFetchAuthClient({
+      baseUrl: 'http://api.example.com',
+      mode: 'cookie',
+      getToken: () => null,
+      csrfCookieName: 'my_csrf',
+    });
+
+    await client.post('/refresh', {});
+
+    const init = mockFetch.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['X-CSRF-Token']).toBe('custom-value');
+  });
+});

@@ -1,8 +1,10 @@
-import type { DatabaseAdapter, EmailAdapter, Token, User } from '@authcore/types'
+import type { DatabaseAdapter, EmailAdapter, EmailTemplate, Token } from '@authcore/types'
 import { generateOpaqueToken, hashToken } from '../utils/token.js'
 import { hashPassword } from '../utils/password.js'
+import { defaultInvitationTemplate } from './templates.js'
 
 const INVITATION_TTL_MS = 48 * 60 * 60 * 1000 // 48 hours
+const INVITATION_TTL_HOURS = 48
 
 /**
  * Create an invitation for a new user.
@@ -17,8 +19,12 @@ export async function createInvitation(params: {
   emailProvider: EmailAdapter
   from: string
   inviteUrl: string
+  template?: EmailTemplate<{ email: string; link: string; ttlHours: number; role: string }>
 }): Promise<string> {
-  const { email, role, db, emailProvider, from, inviteUrl } = params
+  const {
+    email, role, db, emailProvider, from, inviteUrl,
+    template = defaultInvitationTemplate,
+  } = params
 
   const existing = await db.findUserByEmail(email)
   if (existing) {
@@ -43,18 +49,14 @@ export async function createInvitation(params: {
   })
 
   const link = `${inviteUrl}?token=${rawToken}`
+  const rendered = template({ email, link, ttlHours: INVITATION_TTL_HOURS, role })
 
   await emailProvider.send({
     from,
     to: email,
-    subject: 'You have been invited',
-    html: `
-      <p>Hello,</p>
-      <p>You have been invited to create an account. Click the link below to set your password:</p>
-      <p><a href="${link}">${link}</a></p>
-      <p>This link expires in 48 hours.</p>
-    `,
-    text: `You have been invited. Set your password by visiting: ${link}\n\nThis link expires in 48 hours.`,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
   })
 
   return rawToken

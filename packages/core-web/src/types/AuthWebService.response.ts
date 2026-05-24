@@ -4,6 +4,25 @@ import type { AuthWebStateInterface } from './AuthWebState.interface.js'
 export interface AuthResponse<TUser extends PublicUser = PublicUser> {
   user: TUser
   token?: string
+  refreshToken?: string
+}
+
+/** Returned by `signIn` when the user has 2FA enabled — caller must complete the challenge. */
+export interface TwoFactorChallengeResponse {
+  requires2FA: true
+  challengeToken: string
+}
+
+/** Discriminated union returned by `signIn`. Narrow on `'requires2FA' in result`. */
+export type SignInResult<TUser extends PublicUser = PublicUser> =
+  | AuthResponse<TUser>
+  | TwoFactorChallengeResponse
+
+/** 2FA enrollment data returned by `setupTwoFactor`. Show recoveryCodes ONCE. */
+export interface TwoFactorSetupResult {
+  secret: string
+  otpauthUrl: string
+  recoveryCodes: string[]
 }
 
 export interface AuthWebServiceResponseInterface<TUser extends PublicUser = PublicUser> {
@@ -11,7 +30,7 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
   subscribe(listener: () => void): () => void
   notifyListeners(): void
 
-  signIn(params: { email: string; password: string }): Promise<AuthResponse<TUser>>
+  signIn(params: { email: string; password: string }): Promise<SignInResult<TUser>>
   signUp(params: { email: string; password: string }): Promise<AuthResponse<TUser>>
   signOut(): Promise<void>
   verifyEmail(token: string): Promise<void>
@@ -20,4 +39,63 @@ export interface AuthWebServiceResponseInterface<TUser extends PublicUser = Publ
   invite(email: string, role?: string): Promise<void>
   acceptInvitation(token: string, password: string): Promise<AuthResponse<TUser>>
   refreshUser(): Promise<void>
+  /** Exchange the current refresh token for a new JWT (+ rotated refresh token). */
+  refresh(): Promise<AuthResponse<TUser>>
+  /** Revoke the current refresh token on the server and clear local state. */
+  revokeSession(): Promise<void>
+  /**
+   * Build the full OAuth start URL for a provider. The user must be navigated to
+   * this URL (full-page redirect) so the browser follows the provider's redirect chain.
+   */
+  oauthStartUrl(providerId: string): string
+  /**
+   * Convenience: navigate the current window to {@link oauthStartUrl}.
+   * No-op in non-browser environments.
+   */
+  signInWithProvider(providerId: string): void
+  /**
+   * Call this on your OAuth callback landing page (the URL the server redirects to
+   * after a successful OAuth flow). Populates auth state and clears any URL fragment
+   * the server included.
+   *
+   * - Cookie mode: cookies are already set; this fetches `/me`.
+   * - API mode: reads `#token=...&refreshToken=...` from the URL fragment (server must
+   *   be configured with `oauthSuccessRedirect` for this to work), then fetches `/me`.
+   */
+  handleOAuthCallback(): Promise<void>
+  /**
+   * Send a magic-link email to start a passwordless sign-in. Always resolves
+   * successfully — the server returns 200 whether the email exists or not
+   * (enumeration-safe).
+   */
+  signInWithMagicLink(email: string): Promise<void>
+  /**
+   * Call this on your magic-link landing page (the URL embedded in the email,
+   * or the page the server redirects to after consuming the link).
+   *
+   * Reads `?token=…` from the URL — when present, the server has not yet been
+   * called (the user just clicked the email link); this method calls the
+   * consume endpoint and populates auth state.
+   *
+   * When the URL has no `?token=…` but has a `#token=…&refreshToken=…`
+   * fragment (api mode + `magicLinkSuccessRedirect`), reads the tokens from
+   * the fragment, populates state, and clears the fragment.
+   *
+   * In cookie mode after a server-side redirect, calls `/me`.
+   */
+  handleMagicLinkCallback(): Promise<void>
+  /**
+   * Begin 2FA enrollment (authed). Returns the TOTP secret, an `otpauth://`
+   * URL for QR rendering, and 10 single-use recovery codes the user MUST
+   * save somewhere safe — this is the only time they're shown.
+   */
+  setupTwoFactor(): Promise<TwoFactorSetupResult>
+  /** Confirm 2FA enrollment by verifying the first authenticator code. */
+  enableTwoFactor(code: string): Promise<void>
+  /** Disable 2FA. Requires the user's password as a confirmation step. */
+  disableTwoFactor(password: string): Promise<void>
+  /** Complete a 2FA-pending sign-in with a TOTP code. */
+  verifyTwoFactor(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
+  /** Complete a 2FA-pending sign-in with a single-use recovery code. */
+  useRecoveryCode(challengeToken: string, code: string): Promise<AuthResponse<TUser>>
 }

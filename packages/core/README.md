@@ -14,14 +14,19 @@ npm install @authcore/core
 
 ### `createAuth(config)`
 
-The main factory that creates an auth instance with `register`, `login`, `verifyToken`, `verifyEmail`, `forgotPassword`, `resetPassword`, `invite`, and `acceptInvitation` methods.
+The main factory that creates an auth instance with `register`, `login`, `verifyToken`, `verifyEmail`, `forgotPassword`, `resetPassword`, `invite`, `acceptInvitation`, `refresh`, `revoke`, and `revokeAll` methods.
 
 ```ts
 import { createAuth } from '@authcore/core'
 
 const auth = createAuth({
   db: myDatabaseAdapter,
-  session: { strategy: 'jwt', secret: 'your-secret', expiresIn: '7d' },
+  session: {
+    strategy: 'jwt',
+    secret: 'your-secret',
+    expiresIn: '7d',
+    cookieName: 'my_token',     // optional; default 'authcore_token'
+  },
   email: { provider: myEmailAdapter, from: 'auth@example.com' },
   features: ['emailVerification', 'passwordReset', 'invitation'],
   password: { minLength: 8 },
@@ -35,7 +40,18 @@ const auth = createAuth({
 const { user, token } = await auth.register({ email: 'user@example.com', password: 'securepass' })
 const { user, token } = await auth.login({ email: 'user@example.com', password: 'securepass' })
 const publicUser = await auth.verifyToken(token)
+
+// Direct-core callers MUST pass a resetUrl. Framework adapters do this for you.
+await auth.forgotPassword(
+  { email: 'user@example.com' },
+  { resetUrl: 'https://app.example.com/reset-password' },
+)
+
+// The resolved config is exposed so framework adapters can read session.cookieName, etc.
+console.log(auth.config.session.cookieName)
 ```
+
+> **Breaking change in 0.9 (direct-core callers only):** `auth.forgotPassword(input)` is now `auth.forgotPassword(input, { resetUrl })`. The framework adapters (`@authcore/express`, `@authcore/fastify`, `@authcore/nestjs`) build the URL automatically from `baseUrl + paths.resetPassword`, so apps using those packages are unaffected. Direct-core callers must add the second argument or `forgotPassword` throws `AuthError('resetUrl is required', 'MISSING_URL', 500)`. This is a deliberate loud failure that replaces the pre-0.9 silent leak of `session.secret` into reset-email URLs.
 
 ### Adapter Interfaces
 

@@ -15,7 +15,7 @@ import { nodemailerAdapter } from '@authcore/nodemailer-adapter'
 
 const config = {
   // ...
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
   email: {
     provider: nodemailerAdapter({
       host: 'smtp.example.com',

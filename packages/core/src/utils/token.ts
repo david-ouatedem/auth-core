@@ -10,6 +10,32 @@ export function generateOpaqueToken(): string {
 }
 
 /**
+ * Generate a CSRF token. Same shape as `generateOpaqueToken` (256 bits of entropy)
+ * but kept as a separate export to make intent explicit at call sites.
+ * The CSRF token is NOT hashed before storage — it's sent to the client as a cookie
+ * value AND compared byte-for-byte against the `X-CSRF-Token` header on each request.
+ */
+export function generateCsrfToken(): string {
+  return randomBytes(32).toString('hex')
+}
+
+/**
+ * Generate a PKCE code verifier (RFC 7636 §4.1).
+ * 32 random bytes → 43-char base64url string (no padding), within the 43-128 char range.
+ */
+export function generatePkceVerifier(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+/**
+ * Build the PKCE code challenge (S256 method) from a verifier.
+ * SHA-256 of the verifier, base64url-encoded (no padding).
+ */
+export function pkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url')
+}
+
+/**
  * Hash a raw token using SHA-256 for safe database storage.
  * Store the hash; return the raw token to the user.
  *
@@ -71,6 +97,46 @@ export function verifyJwt(token: string, secret: string): JwtPayload | null {
     const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] })
     if (typeof decoded === 'string') return null
     return decoded as JwtPayload
+  } catch {
+    return null
+  }
+}
+
+/** Payload shape for a short-lived 2FA challenge token. */
+export interface TwoFactorChallengePayload {
+  sub: string
+  scope: '2fa-pending'
+  iat?: number
+  exp?: number
+}
+
+/**
+ * Sign a short-lived JWT used as a 2FA login challenge. The token carries the
+ * user id + a scope claim, and expires after `expiresIn` (default 5 minutes).
+ * It is NOT a session token — verify with {@link verifyTwoFactorChallenge}.
+ */
+export function signTwoFactorChallenge(userId: string, secret: string, expiresIn = '5m'): string {
+  const payload = { sub: userId, scope: '2fa-pending' as const }
+  const options = { algorithm: 'HS256' as const, expiresIn }
+  return jwt.sign(payload, secret, options as jwt.SignOptions)
+}
+
+/**
+ * Verify a 2FA challenge token. Rejects tokens with the wrong scope so a
+ * session JWT can't be reused as a challenge (and vice versa).
+ *
+ * @returns The decoded payload, or `null` if invalid / expired / wrong scope.
+ */
+export function verifyTwoFactorChallenge(
+  token: string,
+  secret: string,
+): TwoFactorChallengePayload | null {
+  try {
+    const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] })
+    if (typeof decoded === 'string') return null
+    const payload = decoded as TwoFactorChallengePayload
+    if (payload.scope !== '2fa-pending') return null
+    return payload
   } catch {
     return null
   }

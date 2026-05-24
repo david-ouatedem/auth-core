@@ -238,7 +238,7 @@ When your backend and frontend share the same domain:
 </AuthProvider>
 ```
 
-In cookie mode, the SDK uses `credentials: 'include'` and does not store tokens in localStorage.
+In cookie mode, the SDK uses `credentials: 'include'` and does not store tokens in localStorage. The browser sends whatever cookies the backend set, so the React SDK doesn't need to know the cookie name — but the backend's `session.cookieName` (default `'authcore_token'`) is the single source of truth for what gets set. If you customize it on the backend, no change is needed here.
 
 ## Using Types Directly
 

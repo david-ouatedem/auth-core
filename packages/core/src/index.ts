@@ -2,12 +2,26 @@
 export { hashPassword, verifyPassword } from './utils/password.js'
 export {
   generateOpaqueToken,
+  generateCsrfToken,
+  generatePkceVerifier,
+  pkceChallenge,
   hashToken,
   safeCompareTokens,
   signJwt,
   verifyJwt,
+  signTwoFactorChallenge,
+  verifyTwoFactorChallenge,
 } from './utils/token.js'
-export type { JwtPayload } from './utils/token.js'
+export type { JwtPayload, TwoFactorChallengePayload } from './utils/token.js'
+export {
+  base32Encode,
+  base32Decode,
+  generateTotpSecret,
+  generateTotpCode,
+  verifyTotpCode,
+  buildOtpauthUrl,
+  generateRecoveryCodes,
+} from './utils/totp.js'
 export {
   registerSchema,
   loginSchema,
@@ -16,6 +30,8 @@ export {
   verifyEmailSchema,
   inviteSchema,
   acceptInvitationSchema,
+  sendMagicLinkSchema,
+  consumeMagicLinkSchema,
 } from './utils/validation.js'
 export type {
   RegisterInput,
@@ -25,15 +41,57 @@ export type {
   VerifyEmailInput,
   InviteInput,
   AcceptInvitationInput,
+  SendMagicLinkInput,
+  ConsumeMagicLinkInput,
 } from './utils/validation.js'
 
 // Features
 export { createEmailVerification, verifyEmail } from './features/emailVerification.js'
 export { createPasswordReset, resetPassword } from './features/passwordReset.js'
 export { createInvitation, acceptInvitation } from './features/invitation.js'
+export {
+  issueRefreshToken,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  revokeAllRefreshTokensForUser,
+} from './features/refresh.js'
+export {
+  defaultVerifyEmailTemplate,
+  defaultResetPasswordTemplate,
+  defaultInvitationTemplate,
+  defaultMagicLinkTemplate,
+} from './features/templates.js'
+export {
+  sendMagicLink,
+  consumeMagicLink,
+  MAGIC_LINK_NO_PASSWORD_SENTINEL,
+} from './features/magicLink.js'
+export {
+  setupTwoFactor,
+  enableTwoFactor,
+  disableTwoFactor,
+  verifyTwoFactor,
+  useRecoveryCode,
+} from './features/twoFactor.js'
+export { startOAuth, completeOAuth } from './features/oauth.js'
+export { createGoogleProvider } from './oauth/google.js'
+export type { GoogleProviderConfig } from './oauth/google.js'
+export { createGithubProvider } from './oauth/github.js'
+export type { GithubProviderConfig } from './oauth/github.js'
+export { createMicrosoftProvider } from './oauth/microsoft.js'
+export type { MicrosoftProviderConfig } from './oauth/microsoft.js'
+export { createDiscordProvider } from './oauth/discord.js'
+export type { DiscordProviderConfig } from './oauth/discord.js'
+export { createAppleProvider, generateAppleClientSecret } from './oauth/apple.js'
+export type { AppleProviderConfig } from './oauth/apple.js'
 
 // Auth factory
 export { createAuth, AuthError } from './auth.js'
-export type { AuthCore } from './auth.js'
+export type {
+  AuthCore,
+  SessionResult,
+  TwoFactorChallengeResult,
+  LoginResult,
+} from './auth.js'
 
 export * from '@authcore/types'

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createAuth, AuthError } from '../auth.js'
 import type { DatabaseAdapter, User, Token } from '@authcore/types'
+import { createCaptureEmail, extractTokenFromUrl } from './helpers/captureEmailAdapter.js'
+import { hashToken } from '../utils/token.js'
 
 // ---- helpers ----
 
@@ -11,6 +13,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     passwordHash: '$2b$12$notrealhashbutenoughcharstopassvalidation...',
     emailVerified: false,
     role: 'user',
+    twoFactorEnabled: false,
+    twoFactorSecret: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -27,7 +31,58 @@ function makeMockDb(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
     findToken: vi.fn().mockResolvedValue(null),
     deleteToken: vi.fn().mockResolvedValue(undefined),
     deleteExpiredTokens: vi.fn().mockResolvedValue(undefined),
+    deleteTokensByUserAndType: vi.fn().mockResolvedValue(undefined),
+    findOAuthAccount: vi.fn().mockResolvedValue(null),
+    createOAuthAccount: vi.fn().mockImplementation(async (data) => ({
+      id: 'oauth-1',
+      userId: data.userId,
+      provider: data.provider,
+      providerAccountId: data.providerAccountId,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken ?? null,
+      expiresAt: data.expiresAt ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })),
+    updateOAuthAccount: vi.fn().mockImplementation(async (id, data) => ({
+      id,
+      userId: 'user-1',
+      provider: 'google',
+      providerAccountId: 'remote-1',
+      accessToken: data.accessToken ?? 'access',
+      refreshToken: data.refreshToken ?? null,
+      expiresAt: data.expiresAt ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })),
     ...overrides,
+  }
+}
+
+function makeFakeProvider(overrides: {
+  id?: string
+  exchangeCode?: (params: { code: string; codeVerifier: string; redirectUri: string }) => Promise<{
+    accessToken: string
+    refreshToken?: string
+    expiresIn?: number
+    idToken?: string
+  }>
+  getUserInfo?: (
+    accessToken: string,
+    idToken?: string,
+  ) => Promise<{ id: string; email: string; emailVerified: boolean; name?: string; picture?: string }>
+} = {}) {
+  return {
+    id: overrides.id ?? 'google',
+    scopes: ['openid', 'email', 'profile'],
+    authorize: ({ state, codeChallenge, redirectUri }: { state: string; codeChallenge: string; redirectUri: string }) =>
+      `https://provider.example/authorize?state=${state}&challenge=${codeChallenge}&redirect=${encodeURIComponent(redirectUri)}`,
+    exchangeCode:
+      overrides.exchangeCode ??
+      (async () => ({ accessToken: 'remote-access', refreshToken: 'remote-refresh', expiresIn: 3600 })),
+    getUserInfo:
+      overrides.getUserInfo ??
+      (async () => ({ id: 'remote-1', email: 'remote@example.com', emailVerified: true, name: 'Remote User' })),
   }
 }
 
@@ -340,3 +395,1423 @@ describe('createAuth().acceptInvitation', () => {
     ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_TOKEN' })
   })
 })
+
+// ---- forgotPassword / resetPassword ----
+
+describe('createAuth().forgotPassword', () => {
+  it('is a no-op when passwordReset feature is disabled', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(makeUser()) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await auth.forgotPassword({ email: 'test@example.com' }, { resetUrl: 'https://app.com/reset' })
+    expect(capture.sent).toHaveLength(0)
+  })
+
+  it('is a no-op when no email provider is configured', async () => {
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(makeUser()) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['passwordReset'],
+    })
+
+    // Should not throw — feature enabled but email missing is a soft no-op
+    await expect(
+      auth.forgotPassword({ email: 'test@example.com' }, { resetUrl: 'https://app.com/reset' }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('throws MISSING_URL when resetUrl is not provided', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(makeUser()) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['passwordReset'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await expect(
+      auth.forgotPassword({ email: 'test@example.com' }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'MISSING_URL' })
+    expect(capture.sent).toHaveLength(0)
+  })
+
+  it('sends email with the supplied resetUrl and DOES NOT leak the session secret', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser()),
+      createToken: vi.fn().mockResolvedValue({} as Token),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['passwordReset'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await auth.forgotPassword(
+      { email: 'test@example.com' },
+      { resetUrl: 'https://app.com/reset-password' },
+    )
+
+    expect(capture.sent).toHaveLength(1)
+    const email = capture.last()!
+    expect(email.to).toBe('test@example.com')
+    expect(email.html).toContain('https://app.com/reset-password?token=')
+    expect(email.text).toContain('https://app.com/reset-password?token=')
+    // Regression: secret must never appear in the email body
+    expect(email.html).not.toContain(TEST_SECRET)
+    expect(email.text).not.toContain(TEST_SECRET)
+  })
+
+  it('always succeeds even when the email does not exist (no enumeration)', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(null) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['passwordReset'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await expect(
+      auth.forgotPassword(
+        { email: 'nobody@example.com' },
+        { resetUrl: 'https://app.com/reset' },
+      ),
+    ).resolves.toBeUndefined()
+    expect(capture.sent).toHaveLength(0)
+  })
+})
+
+describe('createAuth().resetPassword', () => {
+  it('updates the user password and deletes the token on success', async () => {
+    const rawToken = 'raw-token-for-reset'
+    const hashedToken = hashToken(rawToken)
+    const tokenRecord: Token = {
+      id: 'token-1',
+      userId: 'user-1',
+      type: 'PASSWORD_RESET',
+      token: hashedToken,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      updateUser,
+      deleteToken,
+      findUserById: vi.fn().mockResolvedValue(makeUser()),
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await auth.resetPassword({ token: rawToken, password: 'newpassword123' })
+
+    expect(updateUser).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ passwordHash: expect.any(String) }),
+    )
+    expect(deleteToken).toHaveBeenCalledWith('token-1')
+  })
+})
+
+// ---- sendEmailVerification / verifyEmail ----
+
+describe('createAuth().sendEmailVerification', () => {
+  it('throws FEATURE_DISABLED when feature is not enabled', async () => {
+    const db = makeMockDb()
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await expect(
+      auth.sendEmailVerification({
+        userId: 'user-1',
+        email: 'test@example.com',
+        verificationUrl: 'https://app.com/verify',
+      }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'FEATURE_DISABLED' })
+  })
+
+  it('sends a verification email with the supplied verificationUrl', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ createToken: vi.fn().mockResolvedValue({} as Token) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['emailVerification'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await auth.sendEmailVerification({
+      userId: 'user-1',
+      email: 'newuser@example.com',
+      verificationUrl: 'https://app.com/verify-email',
+    })
+
+    expect(capture.sent).toHaveLength(1)
+    const email = capture.last()!
+    expect(email.to).toBe('newuser@example.com')
+    expect(email.html).toMatch(/https:\/\/app\.com\/verify-email\?token=[a-f0-9]+/)
+    expect(email.html).not.toContain(TEST_SECRET)
+  })
+})
+
+describe('createAuth().verifyEmail (happy path)', () => {
+  it('sets emailVerified=true and deletes the token', async () => {
+    const rawToken = 'raw-verification-token'
+    const tokenRecord: Token = {
+      id: 'token-1',
+      userId: 'user-1',
+      type: 'EMAIL_VERIFICATION',
+      token: hashToken(rawToken),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const updateUser = vi.fn().mockResolvedValue(makeUser({ emailVerified: true }))
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      updateUser,
+      deleteToken,
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await auth.verifyEmail({ token: rawToken })
+
+    expect(updateUser).toHaveBeenCalledWith('user-1', { emailVerified: true })
+    expect(deleteToken).toHaveBeenCalledWith('token-1')
+  })
+})
+
+// ---- invite / acceptInvitation happy paths ----
+
+describe('createAuth().invite (happy path)', () => {
+  it('creates the invited user and sends an email containing the inviteUrl', async () => {
+    const capture = createCaptureEmail()
+    const createUser = vi.fn().mockResolvedValue(makeUser({ email: 'invited@example.com', role: 'editor' }))
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser,
+      createToken: vi.fn().mockResolvedValue({} as Token),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['invitation'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await auth.invite(
+      { email: 'invited@example.com', role: 'editor' },
+      { inviteUrl: 'https://app.com/accept-invitation' },
+    )
+
+    expect(createUser).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'invited@example.com',
+      role: 'editor',
+    }))
+    expect(capture.sent).toHaveLength(1)
+    expect(capture.last()!.html).toContain('https://app.com/accept-invitation?token=')
+    expect(capture.last()!.html).not.toContain(TEST_SECRET)
+  })
+})
+
+describe('createAuth().acceptInvitation (happy path)', () => {
+  it('sets password, marks email verified, and returns a JWT', async () => {
+    const rawToken = 'raw-invite-token'
+    const tokenRecord: Token = {
+      id: 'token-1',
+      userId: 'user-1',
+      type: 'INVITATION',
+      token: hashToken(rawToken),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const updatedUser = makeUser({ id: 'user-1', email: 'invited@example.com', emailVerified: true })
+    const updateUser = vi.fn().mockResolvedValue(updatedUser)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      findUserById: vi.fn().mockResolvedValue(updatedUser),
+      updateUser,
+      deleteToken: vi.fn().mockResolvedValue(undefined),
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    const result = await auth.acceptInvitation({ token: rawToken, password: 'mypassword123' })
+
+    expect(result.user.email).toBe('invited@example.com')
+    expect(result.token).toBeTruthy()
+    expect(updateUser).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ emailVerified: true, passwordHash: expect.any(String) }),
+    )
+  })
+})
+
+// ---- AuthCore.config exposure ----
+
+describe('createAuth() exposes config', () => {
+  it('returns a config property that round-trips the input config', () => {
+    const db = makeMockDb()
+    const config = {
+      db,
+      session: { strategy: 'jwt' as const, secret: TEST_SECRET, cookieName: 'my_token' },
+    }
+    const auth = createAuth(config)
+    expect(auth.config.session.cookieName).toBe('my_token')
+    expect(auth.config.session.secret).toBe(TEST_SECRET)
+  })
+
+  it('extractTokenFromUrl helper recovers the raw token', () => {
+    expect(extractTokenFromUrl('https://app.com/reset?token=abc123')).toBe('abc123')
+    expect(extractTokenFromUrl('https://app.com/reset-password?foo=1&token=abc123&bar=2')).toBe('abc123')
+  })
+})
+
+// ---- 0.10: Email template overrides ----
+
+describe('EmailTemplates', () => {
+  it('calls a custom verifyEmail template with { email, link, ttlHours: 24 }', async () => {
+    const customTemplate = vi.fn().mockReturnValue({
+      subject: 'Custom verify',
+      html: '<p>Custom HTML</p>',
+      text: 'Custom text',
+    })
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ createToken: vi.fn().mockResolvedValue({} as Token) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['emailVerification'],
+      email: {
+        provider: capture.provider,
+        from: 'auth@test.com',
+        templates: { verifyEmail: customTemplate },
+      },
+    })
+
+    await auth.sendEmailVerification({
+      userId: 'user-1',
+      email: 'verify@example.com',
+      verificationUrl: 'https://app.com/verify',
+    })
+
+    expect(customTemplate).toHaveBeenCalledOnce()
+    const ctx = customTemplate.mock.calls[0]![0] as { email: string; link: string; ttlHours: number }
+    expect(ctx.email).toBe('verify@example.com')
+    expect(ctx.link).toMatch(/^https:\/\/app\.com\/verify\?token=[a-f0-9]+$/)
+    expect(ctx.ttlHours).toBe(24)
+
+    expect(capture.sent).toHaveLength(1)
+    expect(capture.last()!.subject).toBe('Custom verify')
+    expect(capture.last()!.html).toBe('<p>Custom HTML</p>')
+    expect(capture.last()!.text).toBe('Custom text')
+  })
+
+  it('calls a custom resetPassword template with ttlHours: 1', async () => {
+    const customTemplate = vi.fn().mockReturnValue({
+      subject: 'Custom reset',
+      html: '<p>Reset HTML</p>',
+      text: 'Reset text',
+    })
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(makeUser()) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['passwordReset'],
+      email: {
+        provider: capture.provider,
+        from: 'auth@test.com',
+        templates: { resetPassword: customTemplate },
+      },
+    })
+
+    await auth.forgotPassword(
+      { email: 'test@example.com' },
+      { resetUrl: 'https://app.com/reset-password' },
+    )
+
+    expect(customTemplate).toHaveBeenCalledOnce()
+    expect((customTemplate.mock.calls[0]![0] as { ttlHours: number }).ttlHours).toBe(1)
+    expect(capture.last()!.subject).toBe('Custom reset')
+  })
+
+  it('calls a custom invitation template with { email, link, ttlHours: 48, role }', async () => {
+    const customTemplate = vi.fn().mockReturnValue({
+      subject: 'Welcome',
+      html: '<p>Invite HTML</p>',
+      text: 'Invite text',
+    })
+    const capture = createCaptureEmail()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser: vi.fn().mockResolvedValue(makeUser({ email: 'invited@example.com', role: 'editor' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['invitation'],
+      email: {
+        provider: capture.provider,
+        from: 'auth@test.com',
+        templates: { invitation: customTemplate },
+      },
+    })
+
+    await auth.invite(
+      { email: 'invited@example.com', role: 'editor' },
+      { inviteUrl: 'https://app.com/accept' },
+    )
+
+    expect(customTemplate).toHaveBeenCalledOnce()
+    const ctx = customTemplate.mock.calls[0]![0] as { email: string; ttlHours: number; role: string }
+    expect(ctx.email).toBe('invited@example.com')
+    expect(ctx.role).toBe('editor')
+    expect(ctx.ttlHours).toBe(48)
+    expect(capture.last()!.subject).toBe('Welcome')
+  })
+
+  it('falls back to default template when override is not supplied', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({ createToken: vi.fn().mockResolvedValue({} as Token) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['emailVerification'],
+      email: { provider: capture.provider, from: 'auth@test.com' },
+    })
+
+    await auth.sendEmailVerification({
+      userId: 'user-1',
+      email: 'verify@example.com',
+      verificationUrl: 'https://app.com/verify',
+    })
+
+    expect(capture.last()!.subject).toBe('Verify your email address')
+    expect(capture.last()!.html).toContain('https://app.com/verify?token=')
+  })
+})
+
+// ---- 0.10: Refresh tokens ----
+
+describe('createAuth().register/login return refreshToken', () => {
+  it('register returns a non-empty refreshToken', async () => {
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser: vi.fn().mockResolvedValue(makeUser()),
+      createToken: vi.fn().mockResolvedValue({} as Token),
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    const result = await auth.register({ email: 'new@example.com', password: 'password123' })
+    expect(result.refreshToken).toBeTruthy()
+    expect(result.refreshToken.length).toBe(64) // hex of 32 bytes
+    expect(db.createToken).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'REFRESH' }),
+    )
+  })
+
+  it('login returns a non-empty refreshToken', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const realHash = await hashPassword('password123')
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ passwordHash: realHash, emailVerified: true })),
+      createToken: vi.fn().mockResolvedValue({} as Token),
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    const result = await auth.login({ email: 'test@example.com', password: 'password123' })
+    expect(result.refreshToken).toBeTruthy()
+    expect(result.refreshToken.length).toBe(64)
+  })
+})
+
+describe('createAuth().refresh', () => {
+  it('throws INVALID_TOKEN (401) when refresh token is missing', async () => {
+    const db = makeMockDb()
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    await expect(auth.refresh('')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the refresh token is not in the DB', async () => {
+    const db = makeMockDb({ findToken: vi.fn().mockResolvedValue(null) })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    await expect(auth.refresh('nonexistent')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the refresh token is expired (and deletes the row)', async () => {
+    const expiredToken: Token = {
+      id: 'rt-1',
+      userId: 'user-1',
+      type: 'REFRESH',
+      token: 'hash',
+      expiresAt: new Date(Date.now() - 1000),
+      createdAt: new Date(),
+    }
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(expiredToken),
+      deleteToken,
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    await expect(auth.refresh('expired')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TOKEN',
+    })
+    expect(deleteToken).toHaveBeenCalledWith('rt-1')
+  })
+
+  it('rotates: returns new tokens and deletes old refresh row', async () => {
+    const validToken: Token = {
+      id: 'rt-1',
+      userId: 'user-1',
+      type: 'REFRESH',
+      token: 'hash',
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const createToken = vi.fn().mockResolvedValue({} as Token)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(validToken),
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'user-1' })),
+      deleteToken,
+      createToken,
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    const result = await auth.refresh('valid-raw-token')
+
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+    expect(result.refreshToken.length).toBe(64)
+    expect(deleteToken).toHaveBeenCalledWith('rt-1')
+    expect(createToken).toHaveBeenCalledWith(expect.objectContaining({ type: 'REFRESH' }))
+  })
+
+  it('fires onTokenRefresh callback', async () => {
+    const validToken: Token = {
+      id: 'rt-1',
+      userId: 'user-1',
+      type: 'REFRESH',
+      token: 'hash',
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const onTokenRefresh = vi.fn()
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(validToken),
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'user-1' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      callbacks: { onTokenRefresh },
+    })
+
+    await auth.refresh('valid')
+    expect(onTokenRefresh).toHaveBeenCalledOnce()
+    expect(onTokenRefresh.mock.calls[0]![0]).not.toHaveProperty('passwordHash')
+  })
+})
+
+describe('createAuth().revoke / revokeAll', () => {
+  it('revoke deletes the matching REFRESH token', async () => {
+    const tokenRecord: Token = {
+      id: 'rt-1',
+      userId: 'user-1',
+      type: 'REFRESH',
+      token: 'hash',
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      deleteToken,
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await auth.revoke('raw')
+    expect(deleteToken).toHaveBeenCalledWith('rt-1')
+  })
+
+  it('revoke is idempotent when token does not exist', async () => {
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue(null),
+      deleteToken,
+    })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await expect(auth.revoke('does-not-exist')).resolves.toBeUndefined()
+    expect(deleteToken).not.toHaveBeenCalled()
+  })
+
+  it('revoke ignores empty token without DB call', async () => {
+    const db = makeMockDb()
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+    await auth.revoke('')
+    expect(db.findToken).not.toHaveBeenCalled()
+  })
+
+  it('revokeAll calls deleteTokensByUserAndType with REFRESH', async () => {
+    const deleteTokensByUserAndType = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({ deleteTokensByUserAndType })
+    const auth = createAuth({ db, session: { strategy: 'jwt', secret: TEST_SECRET } })
+
+    await auth.revokeAll('user-1')
+    expect(deleteTokensByUserAndType).toHaveBeenCalledWith('user-1', 'REFRESH')
+  })
+})
+
+// ---- 0.10: onFailedLogin callback ----
+
+describe('callbacks.onFailedLogin', () => {
+  it('fires with INVALID_CREDENTIALS when user not found', async () => {
+    const onFailedLogin = vi.fn()
+    const db = makeMockDb({ findUserByEmail: vi.fn().mockResolvedValue(null) })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      callbacks: { onFailedLogin },
+    })
+    await expect(
+      auth.login({ email: 'nobody@example.com', password: 'password123' }),
+    ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' })
+    expect(onFailedLogin).toHaveBeenCalledWith('nobody@example.com', 'INVALID_CREDENTIALS')
+  })
+
+  it('fires with INVALID_CREDENTIALS when password is wrong', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const realHash = await hashPassword('correctpassword')
+    const onFailedLogin = vi.fn()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ passwordHash: realHash, emailVerified: true })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      callbacks: { onFailedLogin },
+    })
+    await expect(
+      auth.login({ email: 'test@example.com', password: 'wrong' }),
+    ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' })
+    expect(onFailedLogin).toHaveBeenCalledWith('test@example.com', 'INVALID_CREDENTIALS')
+  })
+
+  it('fires with EMAIL_NOT_VERIFIED when email verification is required', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const realHash = await hashPassword('password123')
+    const onFailedLogin = vi.fn()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ passwordHash: realHash, emailVerified: false })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['emailVerification'],
+      callbacks: { onFailedLogin },
+    })
+    await expect(
+      auth.login({ email: 'test@example.com', password: 'password123' }),
+    ).rejects.toMatchObject({ code: 'EMAIL_NOT_VERIFIED' })
+    expect(onFailedLogin).toHaveBeenCalledWith('test@example.com', 'EMAIL_NOT_VERIFIED')
+  })
+})
+
+// ---- 0.10: generateCsrfToken ----
+
+describe('generateCsrfToken', () => {
+  it('returns a 64-char hex string distinct across calls', async () => {
+    const { generateCsrfToken } = await import('../utils/token.js')
+    const a = generateCsrfToken()
+    const b = generateCsrfToken()
+    expect(a).toMatch(/^[a-f0-9]{64}$/)
+    expect(b).toMatch(/^[a-f0-9]{64}$/)
+    expect(a).not.toBe(b)
+  })
+})
+
+// ---- 0.11: OAuth ----
+
+const REDIRECT_URI = 'https://app.example/auth/oauth/google/callback'
+
+describe('createAuth().oauthStart', () => {
+  it('throws OAUTH_PROVIDER_UNKNOWN when no provider is registered under that id', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.oauthStart('google', REDIRECT_URI)).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'OAUTH_PROVIDER_UNKNOWN',
+    })
+  })
+
+  it('returns the provider authorization URL and an opaque state', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { authorizationUrl, state } = await auth.oauthStart('google', REDIRECT_URI)
+    expect(authorizationUrl).toContain('https://provider.example/authorize')
+    expect(authorizationUrl).toContain(`state=${encodeURIComponent(state)}`)
+    expect(state).toMatch(/\./) // base64url(payload) + '.' + base64url(sig)
+  })
+})
+
+describe('createAuth().oauthCallback', () => {
+  it('rejects an unsigned/forged state (invalid HMAC)', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state: 'forged.signature', redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 401, code: 'INVALID_TOKEN' })
+  })
+
+  it('rejects a state whose redirectUri does not match the callback URI', async () => {
+    const provider = makeFakeProvider()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: 'https://evil.example/cb' }),
+    ).rejects.toMatchObject({ statusCode: 401 })
+  })
+
+  it('creates a brand-new user when no OAuthAccount and no local user exists', async () => {
+    const provider = makeFakeProvider()
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser: vi.fn().mockResolvedValue(
+        makeUser({ id: 'user-new', email: 'remote@example.com', emailVerified: false }),
+      ),
+      updateUser: vi.fn().mockImplementation(async (id, data) => ({
+        ...makeUser({ id, email: 'remote@example.com' }),
+        ...data,
+      })),
+    })
+    const onSignUp = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+      callbacks: { onSignUp },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(true)
+    expect(result.user.email).toBe('remote@example.com')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+    expect(db.createUser).toHaveBeenCalledOnce()
+    expect(db.createOAuthAccount).toHaveBeenCalledOnce()
+    expect(onSignUp).toHaveBeenCalledOnce()
+  })
+
+  it('links to an existing local user with verified email', async () => {
+    const provider = makeFakeProvider()
+    const existing = makeUser({
+      id: 'user-existing',
+      email: 'remote@example.com',
+      emailVerified: true,
+    })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(existing),
+    })
+    const onSignIn = vi.fn()
+    const onSignUp = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+      callbacks: { onSignIn, onSignUp },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(false)
+    expect(result.user.id).toBe('user-existing')
+    expect(db.createUser).not.toHaveBeenCalled()
+    expect(db.createOAuthAccount).toHaveBeenCalledOnce()
+    expect(onSignIn).toHaveBeenCalledOnce()
+    expect(onSignUp).not.toHaveBeenCalled()
+  })
+
+  it('refuses to link an existing local user when provider has not verified the email', async () => {
+    const provider = makeFakeProvider({
+      getUserInfo: async () => ({ id: 'remote-1', email: 'existing@example.com', emailVerified: false }),
+    })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue(null),
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ email: 'existing@example.com' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'EMAIL_NOT_VERIFIED_BY_PROVIDER' })
+    expect(db.createOAuthAccount).not.toHaveBeenCalled()
+  })
+
+  it('loads the linked user when an OAuthAccount already exists, no new account row created', async () => {
+    const provider = makeFakeProvider()
+    const existing = makeUser({ id: 'user-linked', email: 'remote@example.com', emailVerified: true })
+    const db = makeMockDb({
+      findOAuthAccount: vi.fn().mockResolvedValue({
+        id: 'oauth-existing',
+        userId: 'user-linked',
+        provider: 'google',
+        providerAccountId: 'remote-1',
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        expiresAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+      findUserById: vi.fn().mockResolvedValue(existing),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    const result = await auth.oauthCallback('google', { code: 'abc', state, redirectUri: REDIRECT_URI })
+
+    expect(result.isNewUser).toBe(false)
+    expect(result.user.id).toBe('user-linked')
+    expect(db.createOAuthAccount).not.toHaveBeenCalled()
+    expect(db.updateOAuthAccount).toHaveBeenCalledOnce()
+  })
+
+  it('wraps provider exchangeCode failures as OAUTH_EXCHANGE_FAILED (502)', async () => {
+    const provider = makeFakeProvider({
+      exchangeCode: async () => {
+        throw new Error('upstream 500')
+      },
+    })
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 502, code: 'OAUTH_EXCHANGE_FAILED' })
+  })
+
+  it('wraps provider getUserInfo failures as OAUTH_USERINFO_FAILED (502)', async () => {
+    const provider = makeFakeProvider({
+      getUserInfo: async () => {
+        throw new Error('userinfo 500')
+      },
+    })
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      oauth: { google: provider },
+    })
+    const { state } = await auth.oauthStart('google', REDIRECT_URI)
+    await expect(
+      auth.oauthCallback('google', { code: 'x', state, redirectUri: REDIRECT_URI }),
+    ).rejects.toMatchObject({ statusCode: 502, code: 'OAUTH_USERINFO_FAILED' })
+  })
+})
+
+// ---- 0.12: magic-link ----
+
+const MAGIC_LINK_URL = 'https://app.example/magic'
+
+describe('createAuth().sendMagicLink', () => {
+  it('throws FEATURE_DISABLED when magicLink feature is off', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      email: { provider: createCaptureEmail().provider, from: 'a@b.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'FEATURE_DISABLED' })
+  })
+
+  it('throws EMAIL_NOT_CONFIGURED when no email provider is set', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'EMAIL_NOT_CONFIGURED' })
+  })
+
+  it('sends an email with the magic-link URL and a token query param', async () => {
+    const capture = createCaptureEmail()
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(makeUser({ email: 'existing@example.com' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+
+    await auth.sendMagicLink(
+      { email: 'existing@example.com' },
+      { magicLinkUrl: MAGIC_LINK_URL },
+    )
+
+    expect(capture.sent).toHaveLength(1)
+    const email = capture.last()!
+    expect(email.to).toBe('existing@example.com')
+    expect(email.html).toContain(`${MAGIC_LINK_URL}?token=`)
+    expect(email.html).not.toContain(TEST_SECRET)
+  })
+
+  it('auto-creates a user with a sentinel passwordHash and emailVerified=true', async () => {
+    const capture = createCaptureEmail()
+    const createUser = vi.fn().mockImplementation(async (data) => ({
+      ...makeUser(),
+      email: data.email,
+      passwordHash: data.passwordHash,
+      emailVerified: false,
+    }))
+    const updateUser = vi.fn().mockImplementation(async (id, data) => ({
+      ...makeUser({ id }),
+      ...data,
+    }))
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(null),
+      createUser,
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+
+    await auth.sendMagicLink({ email: 'new@example.com' }, { magicLinkUrl: MAGIC_LINK_URL })
+
+    expect(createUser).toHaveBeenCalledOnce()
+    expect(createUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'new@example.com',
+        passwordHash: '!MAGIC_LINK_NO_PASSWORD',
+      }),
+    )
+    expect(updateUser).toHaveBeenCalledWith(expect.any(String), { emailVerified: true })
+    expect(capture.sent).toHaveLength(1)
+  })
+
+  it('still resolves successfully on invalid email input (no enumeration via validation error)', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'not-an-email' }, { magicLinkUrl: MAGIC_LINK_URL }),
+    ).resolves.toBeUndefined()
+    expect(capture.sent).toHaveLength(0)
+  })
+
+  it('throws MISSING_URL when magicLinkUrl is empty', async () => {
+    const capture = createCaptureEmail()
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      email: { provider: capture.provider, from: 'auth@app.com' },
+    })
+    await expect(
+      auth.sendMagicLink({ email: 'a@b.com' }, { magicLinkUrl: '' }),
+    ).rejects.toMatchObject({ statusCode: 500, code: 'MISSING_URL' })
+  })
+})
+
+describe('createAuth().consumeMagicLink', () => {
+  it('throws FEATURE_DISABLED when magicLink feature is off', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.consumeMagicLink({ token: 'x' })).rejects.toMatchObject({
+      code: 'FEATURE_DISABLED',
+    })
+  })
+
+  it('throws INVALID_TOKEN on missing token field', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({})).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the token is unknown', async () => {
+    const auth = createAuth({
+      db: makeMockDb({ findToken: vi.fn().mockResolvedValue(null) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({ token: 'unknown' })).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('throws INVALID_TOKEN when the token is expired (and deletes the row)', async () => {
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue({
+        id: 'tok-1',
+        userId: 'user-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('expired'),
+        expiresAt: new Date(Date.now() - 1_000),
+        createdAt: new Date(),
+      }),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+    await expect(auth.consumeMagicLink({ token: 'expired' })).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+  })
+
+  it('returns a full session and deletes the token (single-use)', async () => {
+    const user = makeUser({ id: 'u-1', email: 'magic@example.com', emailVerified: true })
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const onSignIn = vi.fn()
+    const db = makeMockDb({
+      findToken: vi.fn().mockResolvedValue({
+        id: 'tok-1',
+        userId: 'u-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('good-raw'),
+        expiresAt: new Date(Date.now() + 60_000),
+        createdAt: new Date(),
+      }),
+      findUserById: vi.fn().mockResolvedValue(user),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+      callbacks: { onSignIn },
+    })
+
+    const result = await auth.consumeMagicLink({ token: 'good-raw' })
+
+    expect(result.user.id).toBe('u-1')
+    expect(result.user.email).toBe('magic@example.com')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+    expect(onSignIn).toHaveBeenCalledOnce()
+  })
+
+  it('refuses to replay: second consume with same token fails', async () => {
+    const findToken = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'tok-1',
+        userId: 'u-1',
+        type: 'MAGIC_LINK',
+        token: hashToken('once'),
+        expiresAt: new Date(Date.now() + 60_000),
+        createdAt: new Date(),
+      })
+      .mockResolvedValue(null)
+    const db = makeMockDb({
+      findToken,
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'u-1' })),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      features: ['magicLink'],
+    })
+
+    await auth.consumeMagicLink({ token: 'once' })
+    await expect(auth.consumeMagicLink({ token: 'once' })).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+  })
+})
+
+// ---- 0.12: Two-factor authentication ----
+
+describe('createAuth() 2FA — setup + enable + disable', () => {
+  it('setupTwoFactor returns secret + otpauthUrl + 10 recovery codes, persists secret + token rows', async () => {
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const createToken = vi.fn().mockResolvedValue({} as Token)
+    const deleteTokensByUserAndType = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(makeUser({ id: 'u-1', email: 'me@example.com' })),
+      updateUser,
+      createToken,
+      deleteTokensByUserAndType,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      appName: 'MyApp',
+    })
+
+    const result = await auth.setupTwoFactor('u-1')
+
+    expect(result.secret).toMatch(/^[A-Z2-7]{32}$/)
+    expect(result.otpauthUrl).toContain('otpauth://totp/MyApp:me%40example.com')
+    expect(result.otpauthUrl).toContain(`secret=${result.secret}`)
+    expect(result.recoveryCodes).toHaveLength(10)
+    expect(updateUser).toHaveBeenCalledWith('u-1', { twoFactorSecret: result.secret })
+    // Old recovery codes wiped, then 10 new ones created
+    expect(deleteTokensByUserAndType).toHaveBeenCalledWith('u-1', 'RECOVERY_CODE')
+    expect(createToken).toHaveBeenCalledTimes(10)
+  })
+
+  it('setupTwoFactor throws USER_NOT_FOUND for an unknown user', async () => {
+    const auth = createAuth({
+      db: makeMockDb({ findUserById: vi.fn().mockResolvedValue(null) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.setupTwoFactor('nope')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'USER_NOT_FOUND',
+    })
+  })
+
+  it('enableTwoFactor verifies the code against the stored secret + flips the flag', async () => {
+    const { generateTotpSecret, generateTotpCode } = await import('../utils/totp.js')
+    const secret = generateTotpSecret()
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorSecret: secret })),
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await auth.enableTwoFactor('u-1', generateTotpCode(secret))
+    expect(updateUser).toHaveBeenCalledWith('u-1', { twoFactorEnabled: true })
+  })
+
+  it('enableTwoFactor rejects an INVALID_TWO_FACTOR_CODE', async () => {
+    const { generateTotpSecret } = await import('../utils/totp.js')
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(makeUser({ twoFactorSecret: generateTotpSecret() })),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.enableTwoFactor('u-1', '000000')).rejects.toMatchObject({
+      code: 'INVALID_TWO_FACTOR_CODE',
+    })
+  })
+
+  it('enableTwoFactor throws TWO_FACTOR_NOT_SET_UP when secret is null', async () => {
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(makeUser({ twoFactorSecret: null })),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.enableTwoFactor('u-1', '123456')).rejects.toMatchObject({
+      code: 'TWO_FACTOR_NOT_SET_UP',
+    })
+  })
+
+  it('disableTwoFactor verifies password and clears secret + flag + recovery codes', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('correct-horse', 4)
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const deleteTokensByUserAndType = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', passwordHash, twoFactorEnabled: true })),
+      updateUser,
+      deleteTokensByUserAndType,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await auth.disableTwoFactor('u-1', 'correct-horse')
+
+    expect(updateUser).toHaveBeenCalledWith('u-1', {
+      twoFactorEnabled: false,
+      twoFactorSecret: null,
+    })
+    expect(deleteTokensByUserAndType).toHaveBeenCalledWith('u-1', 'RECOVERY_CODE')
+  })
+
+  it('disableTwoFactor rejects an incorrect password with INVALID_CREDENTIALS', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('correct-horse', 4)
+    const updateUser = vi.fn().mockResolvedValue(makeUser())
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(makeUser({ passwordHash, twoFactorEnabled: true })),
+      updateUser,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await expect(auth.disableTwoFactor('u-1', 'wrong')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_CREDENTIALS',
+    })
+    expect(updateUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('createAuth() 2FA — login challenge + verify', () => {
+  it('login returns { requires2FA, challengeToken } when 2FA is on for that user', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('mypassword', 4)
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(
+        makeUser({
+          email: 'me@example.com',
+          passwordHash,
+          twoFactorEnabled: true,
+          twoFactorSecret: 'JBSWY3DPEHPK3PXP',
+        }),
+      ),
+    })
+    const onSignIn = vi.fn()
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+      callbacks: { onSignIn },
+    })
+
+    const result = await auth.login({ email: 'me@example.com', password: 'mypassword' })
+
+    expect('requires2FA' in result).toBe(true)
+    if ('requires2FA' in result) {
+      expect(result.requires2FA).toBe(true)
+      expect(result.challengeToken).toBeTruthy()
+    }
+    // No session minted yet → onSignIn should NOT fire
+    expect(onSignIn).not.toHaveBeenCalled()
+  })
+
+  it('login still returns a session when 2FA is disabled (regression check)', async () => {
+    const { hashPassword } = await import('../utils/password.js')
+    const passwordHash = await hashPassword('mypassword', 4)
+    const db = makeMockDb({
+      findUserByEmail: vi.fn().mockResolvedValue(
+        makeUser({ email: 'me@example.com', passwordHash, twoFactorEnabled: false }),
+      ),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    const result = await auth.login({ email: 'me@example.com', password: 'mypassword' })
+    expect('requires2FA' in result).toBe(false)
+  })
+
+  it('verifyTwoFactor exchanges a valid challenge + TOTP for a full session', async () => {
+    const { generateTotpSecret, generateTotpCode } = await import('../utils/totp.js')
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const secret = generateTotpSecret()
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const user = makeUser({
+      id: 'u-1',
+      email: 'me@example.com',
+      twoFactorEnabled: true,
+      twoFactorSecret: secret,
+    })
+    const auth = createAuth({
+      db: makeMockDb({ findUserById: vi.fn().mockResolvedValue(user) }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    const result = await auth.verifyTwoFactor(challengeToken, generateTotpCode(secret))
+    expect(result.user.id).toBe('u-1')
+    expect(result.token).toBeTruthy()
+    expect(result.refreshToken).toBeTruthy()
+  })
+
+  it('verifyTwoFactor rejects a tampered challenge with INVALID_TOKEN', async () => {
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor('not.a.real.jwt', '123456')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('verifyTwoFactor rejects a session JWT used as a challenge (scope check)', async () => {
+    const { signJwt } = await import('../utils/token.js')
+    const sessionJwt = signJwt(
+      { sub: 'u-1', email: 'me@example.com', role: 'user' },
+      TEST_SECRET,
+      '5m',
+    )
+    const auth = createAuth({
+      db: makeMockDb(),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor(sessionJwt, '123456')).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    })
+  })
+
+  it('verifyTwoFactor rejects an INVALID_TWO_FACTOR_CODE', async () => {
+    const { generateTotpSecret } = await import('../utils/totp.js')
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const auth = createAuth({
+      db: makeMockDb({
+        findUserById: vi.fn().mockResolvedValue(
+          makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: generateTotpSecret() }),
+        ),
+      }),
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.verifyTwoFactor(challengeToken, '000000')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_TWO_FACTOR_CODE',
+    })
+  })
+})
+
+describe('createAuth() 2FA — recovery codes', () => {
+  it('useRecoveryCode accepts a valid code, deletes the token row, returns a session', async () => {
+    const { signTwoFactorChallenge, hashToken } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const rawCode = 'AAAA-BBBB-CCCC'
+    const tokenRecord = {
+      id: 'tok-1',
+      userId: 'u-1',
+      type: 'RECOVERY_CODE' as const,
+      token: hashToken(rawCode),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const deleteToken = vi.fn().mockResolvedValue(undefined)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: 'X' })),
+      findToken: vi.fn().mockResolvedValue(tokenRecord),
+      deleteToken,
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    const result = await auth.useRecoveryCode(challengeToken, rawCode)
+    expect(result.user.id).toBe('u-1')
+    expect(deleteToken).toHaveBeenCalledWith('tok-1')
+  })
+
+  it('useRecoveryCode refuses a recovery code that belongs to a DIFFERENT user', async () => {
+    const { signTwoFactorChallenge, hashToken } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('attacker', TEST_SECRET)
+    const tokenForVictim = {
+      id: 'tok-victim',
+      userId: 'victim',
+      type: 'RECOVERY_CODE' as const,
+      token: hashToken('XXXX-YYYY-ZZZZ'),
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    }
+    const db = makeMockDb({
+      findUserById: vi.fn().mockResolvedValue(
+        makeUser({ id: 'attacker', twoFactorEnabled: true, twoFactorSecret: 'X' }),
+      ),
+      findToken: vi.fn().mockResolvedValue(tokenForVictim),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+
+    await expect(auth.useRecoveryCode(challengeToken, 'XXXX-YYYY-ZZZZ')).rejects.toMatchObject({
+      code: 'INVALID_RECOVERY_CODE',
+    })
+  })
+
+  it('useRecoveryCode rejects an unknown code with INVALID_RECOVERY_CODE', async () => {
+    const { signTwoFactorChallenge } = await import('../utils/token.js')
+    const challengeToken = signTwoFactorChallenge('u-1', TEST_SECRET)
+    const db = makeMockDb({
+      findUserById: vi
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'u-1', twoFactorEnabled: true, twoFactorSecret: 'X' })),
+      findToken: vi.fn().mockResolvedValue(null),
+    })
+    const auth = createAuth({
+      db,
+      session: { strategy: 'jwt', secret: TEST_SECRET },
+    })
+    await expect(auth.useRecoveryCode(challengeToken, 'nope')).rejects.toMatchObject({
+      code: 'INVALID_RECOVERY_CODE',
+    })
+  })
+})
+

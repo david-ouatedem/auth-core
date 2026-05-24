@@ -58,6 +58,24 @@ my-app/
 └── src/            # React + @authcore/react
 ```
 
+## Enabling Email Features
+
+Templates don't enable `emailVerification`, `passwordReset`, or `invitation` by default — you need an email provider for those. To enable, edit the backend `createAuth` call:
+
+```ts
+import { resendAdapter } from '@authcore/resend-adapter'
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  email: { provider: resendAdapter(process.env.RESEND_API_KEY!), from: 'auth@yourdomain.com' },
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+})
+
+// And pass baseUrl for outgoing email links:
+app.use('/auth', auth.router({ baseUrl: 'https://yourdomain.com' }))
+```
+
 ## License
 
 [MIT](https://github.com/david-ouatedem/auth-core/blob/main/LICENSE)

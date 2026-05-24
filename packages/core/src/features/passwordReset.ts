@@ -1,8 +1,10 @@
-import type { DatabaseAdapter, EmailAdapter, Token } from '@authcore/types'
+import type { DatabaseAdapter, EmailAdapter, EmailTemplate, Token } from '@authcore/types'
 import { generateOpaqueToken, hashToken } from '../utils/token.js'
 import { hashPassword } from '../utils/password.js'
+import { defaultResetPasswordTemplate } from './templates.js'
 
 const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000 // 1 hour
+const PASSWORD_RESET_TTL_HOURS = 1
 
 /**
  * Initiate a password reset flow.
@@ -15,8 +17,9 @@ export async function createPasswordReset(params: {
   emailProvider: EmailAdapter
   from: string
   resetUrl: string
+  template?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
 }): Promise<void> {
-  const { email, db, emailProvider, from, resetUrl } = params
+  const { email, db, emailProvider, from, resetUrl, template = defaultResetPasswordTemplate } = params
 
   // Always returns 200 — do not reveal whether the email exists
   const user = await db.findUserByEmail(email)
@@ -33,19 +36,14 @@ export async function createPasswordReset(params: {
   })
 
   const link = `${resetUrl}?token=${rawToken}`
+  const rendered = template({ email, link, ttlHours: PASSWORD_RESET_TTL_HOURS })
 
   await emailProvider.send({
     from,
     to: email,
-    subject: 'Reset your password',
-    html: `
-      <p>Hello,</p>
-      <p>We received a request to reset your password. Click the link below to proceed:</p>
-      <p><a href="${link}">${link}</a></p>
-      <p>This link expires in 1 hour.</p>
-      <p>If you did not request a password reset, you can ignore this email.</p>
-    `,
-    text: `Reset your password by visiting: ${link}\n\nThis link expires in 1 hour.`,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
   })
 }
 

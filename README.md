@@ -14,11 +14,13 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/types`](packages/types) | Shared type definitions for adapters, config, and domain models |
 | [`@authcore/core`](packages/core) | Framework-agnostic auth logic and adapter interfaces |
 | [`@authcore/core-web`](packages/core-web) | Framework-agnostic web auth service (HTTP client, session persistence) |
+| [`@authcore/nextjs`](packages/nextjs) | Next.js App Router adapter (handler + server helpers + middleware) |
 | [`@authcore/express`](packages/express) | Express router + middleware |
 | [`@authcore/fastify`](packages/fastify) | Fastify plugin + hooks |
 | [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |
 | [`@authcore/react`](packages/react) | React SDK: `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
+| [`@authcore/drizzle-adapter`](packages/drizzle-adapter) | Drizzle ORM database adapter (Postgres + SQLite) |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
 | [`@authcore/nodemailer-adapter`](packages/nodemailer-adapter) | Nodemailer email adapter |
 | [`create-authcore-app`](packages/create-authcore-app) | CLI scaffolding tool |
@@ -220,7 +222,10 @@ const auth = createAuth({
   session: {
     strategy: 'jwt',
     secret: process.env.AUTH_SECRET!,
-    expiresIn: '7d',  // default
+    expiresIn: '15m',           // short-lived JWT; pair with refresh tokens
+    refreshExpiresIn: '30d',    // refresh-token expiry (0.10+)
+    cookieName: 'my_token',     // optional; default 'authcore_token'
+    csrf: true,                 // opt-in CSRF protection in cookie mode (0.10+)
   },
 
   // Email (required for email verification + password reset)
@@ -243,6 +248,14 @@ const auth = createAuth({
     onSignUp: (user) => console.log('New user:', user.email),
     onSignIn: (user) => console.log('Signed in:', user.email),
   },
+
+  // OAuth providers (0.11+)
+  oauth: {
+    google: createGoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  },
 })
 ```
 
@@ -252,8 +265,8 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/register` | Create account, returns `{ user, token }` |
-| POST | `/login` | Sign in, returns `{ user, token }` |
+| POST | `/register` | Create account, returns `{ user, token, refreshToken }` |
+| POST | `/login` | Sign in, returns `{ user, token, refreshToken }` |
 | POST | `/logout` | Sign out |
 | GET | `/me` | Get current user (requires auth) |
 | POST | `/verify-email` | Verify email with token |
@@ -261,6 +274,10 @@ All endpoints are mounted under the prefix you choose (e.g. `/auth`).
 | POST | `/reset-password` | Reset password with token |
 | POST | `/invite` | Invite a user by email (requires auth) |
 | POST | `/accept-invitation` | Accept invitation, set password |
+| POST | `/refresh` | Rotate refresh token, get new JWT (0.10+) |
+| POST | `/revoke` | Revoke a refresh token, idempotent (0.10+) |
+| GET | `/oauth/:provider` | Begin OAuth flow (0.11+) |
+| GET | `/oauth/:provider/callback` | OAuth callback (0.11+) |
 
 ## RBAC
 
@@ -337,11 +354,12 @@ See the [`@authcore/core` README](packages/core) for the adapter interfaces.
 
 ## Security
 
-- Passwords hashed with bcryptjs (12+ rounds)
-- Tokens are random, SHA-256 hashed before storage, compared with `crypto.timingSafeEqual`
+- Passwords hashed with bcryptjs (12+ rounds, silently clamped from below)
+- Tokens are random (32 bytes), SHA-256 hashed before DB storage, compared with `crypto.timingSafeEqual`
 - Password reset tokens expire in 1 hour, email verification in 24 hours, invitation tokens in 48 hours
 - Forgot password always returns 200 (prevents email enumeration)
 - All inputs validated with Zod
+- Reset/verify/invite URLs are built by framework adapters from `baseUrl + paths.*`; the JWT signing secret never appears in outbound emails (see `CHANGELOG.md` 0.9 security entry for the affected-versions advisory)
 
 ## Development
 

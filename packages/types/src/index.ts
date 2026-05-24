@@ -3,7 +3,14 @@
  * These are the canonical shapes that adapters must produce/consume.
  */
 
-export type TokenType = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'SESSION' | 'INVITATION'
+export type TokenType =
+  | 'EMAIL_VERIFICATION'
+  | 'PASSWORD_RESET'
+  | 'SESSION'
+  | 'INVITATION'
+  | 'REFRESH'
+  | 'MAGIC_LINK'
+  | 'RECOVERY_CODE'
 
 /** A user record as stored in the database. */
 export interface User {
@@ -12,6 +19,17 @@ export interface User {
   passwordHash: string
   emailVerified: boolean
   role: string
+  /** Whether two-factor (TOTP) authentication is enabled for this user. */
+  twoFactorEnabled: boolean
+  /**
+   * Base32-encoded TOTP secret. Set at 2FA enrollment time (`setupTwoFactor`),
+   * cleared when 2FA is disabled. `null` for users who haven't enrolled.
+   *
+   * Never exposed in `PublicUser`. Stored in plaintext — encrypting only this
+   * column doesn't meaningfully help if the DB is compromised (passwords are
+   * hashed but everything else needs to be readable for the auth flow).
+   */
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -43,20 +61,81 @@ export interface CreateTokenInput {
   expiresAt: Date
 }
 
-/** Safe user shape returned to callers (no passwordHash). */
-export type PublicUser = Omit<User, 'passwordHash'>
+/**
+ * A linked OAuth account. One user can have many OAuth accounts (one per provider).
+ * (provider, providerAccountId) is the unique key — that's the identity the provider asserts.
+ */
+export interface OAuthAccount {
+  id: string
+  userId: string
+  /** Provider id, e.g. 'google', 'github'. */
+  provider: string
+  /** The user's identifier at the provider (Google's `sub`, GitHub's numeric id, etc.). */
+  providerAccountId: string
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface CreateOAuthAccountInput {
+  userId: string
+  provider: string
+  providerAccountId: string
+  accessToken: string
+  refreshToken?: string | null
+  expiresAt?: Date | null
+}
+
+/** Safe user shape returned to callers — strips `passwordHash` and `twoFactorSecret`. */
+export type PublicUser = Omit<User, 'passwordHash' | 'twoFactorSecret'>
 
 /** Configuration for the AuthCore session/JWT strategy. */
 export interface SessionConfig {
   strategy: 'jwt'
   secret: string
+  /** Access-token (JWT) expiry. Default: `'7d'`. With refresh tokens enabled, use a shorter value like `'15m'`. */
   expiresIn?: string
+  /** Refresh-token expiry. Default: `'30d'`. */
+  refreshExpiresIn?: string
+  /**
+   * Cookie name used when framework adapters are configured with `useCookies: true`.
+   * The same name is read by middleware/guards. Defaults to `'authcore_token'`.
+   * The refresh cookie uses `${cookieName}_refresh`; the CSRF cookie uses `${cookieName}_csrf`.
+   */
+  cookieName?: string
+  /**
+   * Opt-in CSRF protection (synchronizer-token pattern). When `true` AND `useCookies: true`,
+   * register/login/refresh/accept-invitation set a non-httpOnly `${cookieName}_csrf` cookie.
+   * Clients must echo the value back as `X-CSRF-Token` on state-changing requests
+   * (POST/PUT/PATCH/DELETE). Off by default for backward compatibility.
+   */
+  csrf?: boolean
+}
+
+/** A custom email template — a function that renders subject/html/text from context. */
+export interface EmailTemplate<TCtx> {
+  (ctx: TCtx): { subject: string; html: string; text: string }
+}
+
+/** Per-template overrides on `EmailConfig.templates`. Unset entries fall back to library defaults. */
+export interface EmailTemplates {
+  verifyEmail?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
+  resetPassword?: EmailTemplate<{ email: string; link: string; ttlHours: number }>
+  invitation?: EmailTemplate<{ email: string; link: string; ttlHours: number; role: string }>
+  magicLink?: EmailTemplate<{ email: string; link: string; ttlMinutes: number }>
 }
 
 /** Configuration for email features. */
 export interface EmailConfig {
   provider: EmailAdapter
   from: string
+  /**
+   * Per-feature template overrides. Each entry is a function `(ctx) => { subject, html, text }`.
+   * When unset, the library default templates are used.
+   */
+  templates?: EmailTemplates
 }
 
 /** Optional lifecycle callbacks. */
@@ -65,6 +144,11 @@ export interface AuthCallbacks {
   onSignIn?: (user: PublicUser) => void | Promise<void>
   onSignOut?: (userId: string) => void | Promise<void>
   onPasswordReset?: (user: PublicUser) => void | Promise<void>
+  onTokenRefresh?: (user: PublicUser) => void | Promise<void>
+  onFailedLogin?: (
+    email: string,
+    reason: 'INVALID_CREDENTIALS' | 'EMAIL_NOT_VERIFIED',
+  ) => void | Promise<void>
 }
 
 /**
@@ -79,6 +163,64 @@ export interface DatabaseAdapter {
   findToken(rawToken: string, type: TokenType): Promise<Token | null>
   deleteToken(id: string): Promise<void>
   deleteExpiredTokens(): Promise<void>
+  /**
+   * Delete every token of a given type for a single user. Used by
+   * `auth.revokeAll(userId)` to log a user out of every device (revokes all
+   * outstanding REFRESH tokens). May also be used by feature flows to clear
+   * stale verification/reset tokens.
+   */
+  deleteTokensByUserAndType(userId: string, type: TokenType): Promise<void>
+  /** Look up an OAuth account by (provider, providerAccountId). Returns null if no match. */
+  findOAuthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null>
+  /** Create a new linked OAuth account row. */
+  createOAuthAccount(data: CreateOAuthAccountInput): Promise<OAuthAccount>
+  /** Update the access/refresh token + expiry on an existing OAuth account (post-refresh). */
+  updateOAuthAccount(
+    id: string,
+    data: Partial<Pick<OAuthAccount, 'accessToken' | 'refreshToken' | 'expiresAt'>>,
+  ): Promise<OAuthAccount>
+}
+
+/** User profile returned by an OAuth provider. */
+export interface OAuthProviderUserInfo {
+  /** The user's identifier at the provider (must be stable, e.g. Google's `sub`). */
+  id: string
+  email: string
+  /** Whether the provider has verified the email. Required for the auto-link policy. */
+  emailVerified: boolean
+  name?: string
+  picture?: string
+}
+
+/** Tokens returned by an OAuth provider's token endpoint. */
+export interface OAuthProviderTokens {
+  accessToken: string
+  refreshToken?: string
+  /** Lifetime in seconds (provider-specific). */
+  expiresIn?: number
+  /** OpenID Connect id_token, if the provider supports it. */
+  idToken?: string
+}
+
+/**
+ * Abstraction over an OAuth 2.0 / OpenID Connect identity provider.
+ * `createGoogleProvider(...)` ships in `@authcore/core`; community PRs add more.
+ */
+export interface OAuthProvider {
+  /** Stable provider id, used as the URL slug (e.g. 'google'). */
+  id: string
+  /** Scopes requested in the authorization URL. */
+  scopes: string[]
+  /** Build the URL to redirect the user to for authorization. */
+  authorize(params: { state: string; codeChallenge: string; redirectUri: string }): string
+  /** Exchange the authorization code (+ PKCE verifier) for tokens. */
+  exchangeCode(params: {
+    code: string
+    codeVerifier: string
+    redirectUri: string
+  }): Promise<OAuthProviderTokens>
+  /** Fetch the user profile from the provider. `emailVerified` MUST be populated honestly. */
+  getUserInfo(accessToken: string, idToken?: string): Promise<OAuthProviderUserInfo>
 }
 
 /**
@@ -99,8 +241,7 @@ export interface AuthCoreConfig {
   db: DatabaseAdapter
   session: SessionConfig
   email?: EmailConfig
-  features?: Array<'emailVerification' | 'passwordReset' | 'invitation'>
-  mode?: 'api' | 'monorepo' | 'auto'
+  features?: Array<'emailVerification' | 'passwordReset' | 'invitation' | 'magicLink'>
   password?: {
     minLength?: number
     saltRounds?: number
@@ -108,5 +249,17 @@ export interface AuthCoreConfig {
   rbac?: {
     defaultRole?: string
   }
+  /**
+   * Display name for your app, shown by authenticator apps when the user adds
+   * a 2FA secret (the "issuer" in the otpauth URL). Defaults to `'AuthCore'`.
+   * Set this to something like `'MyApp'` so users see your brand in their
+   * authenticator. Has no security implications.
+   */
+  appName?: string
   callbacks?: AuthCallbacks
+  /**
+   * Map of OAuth providers keyed by provider id (e.g. `{ google: createGoogleProvider({...}) }`).
+   * When set, framework adapters mount `GET /auth/oauth/:provider` and `GET /auth/oauth/:provider/callback`.
+   */
+  oauth?: Record<string, OAuthProvider>
 }

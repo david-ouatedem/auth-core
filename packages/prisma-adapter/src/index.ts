@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto'
-import type { DatabaseAdapter, CreateUserInput, CreateTokenInput, TokenType, User, Token } from '@authcore/types'
+import type {
+  DatabaseAdapter,
+  CreateUserInput,
+  CreateTokenInput,
+  CreateOAuthAccountInput,
+  OAuthAccount,
+  TokenType,
+  User,
+  Token,
+} from '@authcore/types'
 
 /**
  * Map Prisma's TokenType enum to AuthCore's TokenType union.
@@ -10,7 +19,10 @@ function toCoreTokenType(type: string): TokenType {
     type === 'EMAIL_VERIFICATION' ||
     type === 'PASSWORD_RESET' ||
     type === 'SESSION' ||
-    type === 'INVITATION'
+    type === 'INVITATION' ||
+    type === 'REFRESH' ||
+    type === 'MAGIC_LINK' ||
+    type === 'RECOVERY_CODE'
   ) {
     return type
   }
@@ -26,6 +38,8 @@ function mapUser(prismaUser: {
   passwordHash: string
   emailVerified: boolean
   role: string
+  twoFactorEnabled: boolean
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }): User {
@@ -35,6 +49,8 @@ function mapUser(prismaUser: {
     passwordHash: prismaUser.passwordHash,
     emailVerified: prismaUser.emailVerified,
     role: prismaUser.role,
+    twoFactorEnabled: prismaUser.twoFactorEnabled,
+    twoFactorSecret: prismaUser.twoFactorSecret,
     createdAt: prismaUser.createdAt,
     updatedAt: prismaUser.updatedAt,
   }
@@ -61,6 +77,31 @@ function mapToken(prismaToken: {
   }
 }
 
+/** Map a Prisma OAuthAccount record to AuthCore's OAuthAccount type. */
+function mapOAuthAccount(row: {
+  id: string
+  userId: string
+  provider: string
+  providerAccountId: string
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+}): OAuthAccount {
+  return {
+    id: row.id,
+    userId: row.userId,
+    provider: row.provider,
+    providerAccountId: row.providerAccountId,
+    accessToken: row.accessToken,
+    refreshToken: row.refreshToken,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
 /**
  * Hash a raw token using SHA-256 before querying the database.
  */
@@ -78,6 +119,8 @@ interface PrismaUserRecord {
   passwordHash: string
   emailVerified: boolean
   role: string
+  twoFactorEnabled: boolean
+  twoFactorSecret: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -93,6 +136,8 @@ interface PrismaClientLike {
         passwordHash: string
         emailVerified: boolean
         role: string
+        twoFactorEnabled: boolean
+        twoFactorSecret: string | null
         updatedAt: Date
       }>
     }): Promise<PrismaUserRecord>
@@ -121,9 +166,48 @@ interface PrismaClientLike {
       expiresAt: Date
       createdAt: Date
     } | null>
-    delete(args: { where: { id: string } }): Promise<void>
-    deleteMany(args: { where: { expiresAt: { lt: Date } } }): Promise<{ count: number }>
+    delete(args: { where: { id: string } }): Promise<unknown>
+    deleteMany(args: {
+      where:
+        | { expiresAt: { lt: Date } }
+        | { userId: string; type: string }
+    }): Promise<{ count: number }>
   }
+  oAuthAccount: {
+    findUnique(args: {
+      where: { provider_providerAccountId: { provider: string; providerAccountId: string } }
+    }): Promise<PrismaOAuthAccountRecord | null>
+    create(args: {
+      data: {
+        userId: string
+        provider: string
+        providerAccountId: string
+        accessToken: string
+        refreshToken?: string | null
+        expiresAt?: Date | null
+      }
+    }): Promise<PrismaOAuthAccountRecord>
+    update(args: {
+      where: { id: string }
+      data: Partial<{
+        accessToken: string
+        refreshToken: string | null
+        expiresAt: Date | null
+      }>
+    }): Promise<PrismaOAuthAccountRecord>
+  }
+}
+
+interface PrismaOAuthAccountRecord {
+  id: string
+  userId: string
+  provider: string
+  providerAccountId: string
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+  createdAt: Date
+  updatedAt: Date
 }
 
 /**
@@ -172,6 +256,8 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
           ...(data.passwordHash !== undefined ? { passwordHash: data.passwordHash } : {}),
           ...(data.emailVerified !== undefined ? { emailVerified: data.emailVerified } : {}),
           ...(data.role !== undefined ? { role: data.role } : {}),
+          ...(data.twoFactorEnabled !== undefined ? { twoFactorEnabled: data.twoFactorEnabled } : {}),
+          ...(data.twoFactorSecret !== undefined ? { twoFactorSecret: data.twoFactorSecret } : {}),
         },
       })
       return mapUser(user)
@@ -203,6 +289,46 @@ export function prismaAdapter(prisma: PrismaClientLike): DatabaseAdapter {
 
     async deleteExpiredTokens(): Promise<void> {
       await prisma.token.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+    },
+
+    async deleteTokensByUserAndType(userId: string, type: TokenType): Promise<void> {
+      await prisma.token.deleteMany({ where: { userId, type } })
+    },
+
+    async findOAuthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null> {
+      const row = await prisma.oAuthAccount.findUnique({
+        where: { provider_providerAccountId: { provider, providerAccountId } },
+      })
+      return row ? mapOAuthAccount(row) : null
+    },
+
+    async createOAuthAccount(data: CreateOAuthAccountInput): Promise<OAuthAccount> {
+      const row = await prisma.oAuthAccount.create({
+        data: {
+          userId: data.userId,
+          provider: data.provider,
+          providerAccountId: data.providerAccountId,
+          accessToken: data.accessToken,
+          ...(data.refreshToken !== undefined ? { refreshToken: data.refreshToken } : {}),
+          ...(data.expiresAt !== undefined ? { expiresAt: data.expiresAt } : {}),
+        },
+      })
+      return mapOAuthAccount(row)
+    },
+
+    async updateOAuthAccount(
+      id: string,
+      data: Partial<Pick<OAuthAccount, 'accessToken' | 'refreshToken' | 'expiresAt'>>,
+    ): Promise<OAuthAccount> {
+      const row = await prisma.oAuthAccount.update({
+        where: { id },
+        data: {
+          ...(data.accessToken !== undefined ? { accessToken: data.accessToken } : {}),
+          ...(data.refreshToken !== undefined ? { refreshToken: data.refreshToken } : {}),
+          ...(data.expiresAt !== undefined ? { expiresAt: data.expiresAt } : {}),
+        },
+      })
+      return mapOAuthAccount(row)
     },
   }
 }

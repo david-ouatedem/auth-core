@@ -15,13 +15,13 @@ declare global {
 /**
  * Extract a Bearer token from the Authorization header or an auth cookie.
  */
-function extractToken(req: Request): string | null {
+function extractToken(req: Request, cookieName: string): string | null {
   const authHeader = req.headers['authorization']
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.slice(7)
   }
   // Cookie-based (monorepo mode)
-  const cookieToken = (req.cookies as Record<string, string> | undefined)?.['authcore_token']
+  const cookieToken = (req.cookies as Record<string, string> | undefined)?.[cookieName]
   return cookieToken ?? null
 }
 
@@ -30,13 +30,13 @@ function extractToken(req: Request): string | null {
  * Attaches `req.user` if the token is valid.
  * Returns 401 if no token is provided or the token is invalid.
  */
-export function createAuthMiddleware(auth: AuthCore) {
+export function createAuthMiddleware(auth: AuthCore, cookieName = 'authcore_token') {
   return async function authMiddleware(
     req: Request,
     res: Response,
     next: NextFunction,
   ): Promise<void> {
-    const token = extractToken(req)
+    const token = extractToken(req, cookieName)
 
     if (!token) {
       res.status(401).json({ error: 'Authentication required' })
@@ -60,13 +60,13 @@ export function createAuthMiddleware(auth: AuthCore) {
  * but does NOT reject unauthenticated requests. Useful for routes that behave
  * differently based on auth state.
  */
-export function createOptionalAuthMiddleware(auth: AuthCore) {
+export function createOptionalAuthMiddleware(auth: AuthCore, cookieName = 'authcore_token') {
   return async function optionalAuthMiddleware(
     req: Request,
     _res: Response,
     next: NextFunction,
   ): Promise<void> {
-    const token = extractToken(req)
+    const token = extractToken(req, cookieName)
 
     if (token) {
       const user = await auth.verifyToken(token)

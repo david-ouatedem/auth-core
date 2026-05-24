@@ -15,13 +15,15 @@ import { resendAdapter } from '@authcore/resend-adapter'
 
 const config = {
   // ...
-  features: ['emailVerification', 'passwordReset'],
+  features: ['emailVerification', 'passwordReset', 'invitation'],
   email: {
     provider: resendAdapter(process.env.RESEND_API_KEY!),
     from: 'noreply@myapp.com',
   },
 }
 ```
+
+AuthCore sends both HTML and plain-text variants of every email; Resend supports both directly.
 
 ## Requirements
 

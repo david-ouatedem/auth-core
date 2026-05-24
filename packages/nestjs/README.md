@@ -5,8 +5,23 @@
 ## Install
 
 ```bash
+# Core packages
 npm install @authcore/nestjs @authcore/prisma-adapter
+
+# Prisma client (required)
+npm install @prisma/client
+
+# Prisma CLI (required for migrations/codegen — dev dependency)
+npm install --save-dev prisma
+
+# Prisma 6 only: driver adapter for your database (PostgreSQL example)
+npm install @prisma/adapter-pg pg
+npm install --save-dev @types/pg
 ```
+
+> If you are on Prisma 5 you do not need `@prisma/adapter-pg`. See the
+> [`@authcore/prisma-adapter` README](https://www.npmjs.com/package/@authcore/prisma-adapter)
+> for schema setup and Prisma version details.
 
 Peer dependencies (already installed in any NestJS project):
 - `@nestjs/common` (^10.0.0 or ^11.0.0)
@@ -24,7 +39,13 @@ import { AuthModule } from '@authcore/nestjs'
 import { prismaAdapter } from '@authcore/prisma-adapter'
 import { PrismaClient } from '@prisma/client'
 
+// Prisma 5 (default prisma-client-js generator):
 const prisma = new PrismaClient()
+
+// Prisma 6 (new prisma-client generator — requires a driver adapter):
+// import { PrismaPg } from '@prisma/adapter-pg'
+// const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
+// const prisma = new PrismaClient({ adapter })
 
 @Module({
   imports: [
@@ -102,14 +123,46 @@ Additional options:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `baseUrl` | `string` | `''` | Base URL for building email links |
+| `useCookies` | `boolean` | `false` | Set/clear an httpOnly cookie on register/login/logout/accept-invitation instead of returning the token in the body |
+
+Cookie name comes from `session.cookieName` (default `'authcore_token'`). See `@authcore/types` for the full `SessionConfig` shape.
 
 ### Guards
 
 | Guard | Description |
 |-------|-------------|
-| `AuthGuard` | Requires a valid JWT. Attaches `request.user`. Returns 403 if unauthenticated. |
+| `AuthGuard` | Requires a valid JWT. Attaches `request.user`. Throws `UnauthorizedException` (401) if no token is present or the token is invalid. |
 | `AuthOptionalGuard` | Attaches `request.user` if token is valid. Never rejects. |
-| `RolesGuard` | Checks `request.user.role` against `@Roles()`. Returns 403 if not allowed. Use after `AuthGuard`. |
+| `RolesGuard` | Checks `request.user.role` against `@Roles()`. Throws `ForbiddenException` (403) if not allowed. Use after `AuthGuard`. |
+
+### Cookie Mode
+
+```ts
+// main.ts
+import cookieParser from 'cookie-parser'
+const app = await NestFactory.create(AppModule)
+app.use(cookieParser())
+```
+
+```ts
+// app.module.ts
+AuthModule.register({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',
+  },
+  useCookies: true,
+})
+```
+
+When `useCookies: true`:
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/accept-invitation` set the cookie and return `{ user }` (no token in body).
+- `POST /auth/logout` clears the cookie.
+- `AuthGuard` / `AuthOptionalGuard` fall back to reading the cookie if no `Authorization: Bearer ...` header is present.
+
+Cookie mode requires `@nestjs/platform-express` (the default) and `cookie-parser` middleware in `main.ts`.
 
 ### Decorators
 

@@ -46,12 +46,29 @@ function MyComponent() {
     verifyEmail,       // (token) => Promise<void>
     invite,            // (email, role?) => Promise<void>
     acceptInvitation,  // (token, password) => Promise<AuthResponse>
-    refreshUser,       // () => Promise<void>
+    refreshUser,       // () => Promise<void> — re-fetch /me
+    refresh,           // () => Promise<AuthResponse> — rotate refresh token (0.10+)
+    revokeSession,     // () => Promise<void> — server-side revoke (0.10+)
   } = useAuth()
 
   // ...
 }
 ```
+
+## Refresh tokens (0.10+)
+
+`signIn` / `signUp` / `acceptInvitation` now return `{ user, token, refreshToken }`. The SDK handles refresh tokens automatically:
+
+- In `mode='api'` with `persistSession: true` (default), the refresh token is stored in `localStorage` under `${storageKey}_refresh`.
+- In `mode='cookie'`, the browser carries the refresh cookie automatically.
+- Calling `refresh()` rotates the refresh token; the old one becomes invalid immediately.
+- Calling `revokeSession()` revokes server-side and clears local state.
+
+## CSRF (0.10+, cookie mode)
+
+When your backend has `session.csrf: true` and is in cookie mode, the SDK automatically reads the `authcore_token_csrf` cookie from `document.cookie` and adds `X-CSRF-Token` to every POST/PUT/PATCH/DELETE request. No app code needed.
+
+See [CSRF](/security/csrf).
 
 ### Extended user type
 

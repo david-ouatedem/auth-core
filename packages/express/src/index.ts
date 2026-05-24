@@ -69,6 +69,7 @@ export interface ExpressAuth {
  */
 export function createAuth(config: AuthCoreConfig): ExpressAuth {
   const core = createCoreAuth(config)
+  const cookieName = core.config.session.cookieName ?? 'authcore_token'
 
   return {
     router(routerConfig?: RouterConfig) {
@@ -76,11 +77,11 @@ export function createAuth(config: AuthCoreConfig): ExpressAuth {
     },
 
     middleware() {
-      return createAuthMiddleware(core) as RequestHandler
+      return createAuthMiddleware(core, cookieName) as RequestHandler
     },
 
     optionalMiddleware() {
-      return createOptionalAuthMiddleware(core) as RequestHandler
+      return createOptionalAuthMiddleware(core, cookieName) as RequestHandler
     },
 
     requireRole(...roles: string[]) {

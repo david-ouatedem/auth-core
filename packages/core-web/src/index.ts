@@ -2,6 +2,12 @@ export { AuthWebService } from './AuthWebService.js'
 export { createFetchAuthClient, AuthRequestError } from './http-client/createFetchAuthClient.js'
 export type { AuthWebRoutesInterface } from './types/AuthWebRoutes.interface.js'
 export type { AuthWebStateInterface } from './types/AuthWebState.interface.js'
-export type { AuthResponse, AuthWebServiceResponseInterface } from './types/AuthWebService.response.js'
+export type {
+  AuthResponse,
+  AuthWebServiceResponseInterface,
+  SignInResult,
+  TwoFactorChallengeResponse,
+  TwoFactorSetupResult,
+} from './types/AuthWebService.response.js'
 export type { AuthResponseTransformers } from './AuthWebService.js'
 export type { HttpClient } from './types/HttpClients.interface.js'
