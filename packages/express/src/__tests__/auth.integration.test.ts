@@ -1046,7 +1046,10 @@ describeIf('@authcore/express magic-link (0.12)', () => {
     expect(res.status).toBe(200)
     expect(capture.sent).toHaveLength(1)
     const sent = capture.last()!
-    expect(sent.html).toContain('http://localhost/auth/magic-link/consume?token=')
+    // The URL is built from baseUrl + paths.consumeMagicLink. The router doesn't
+    // know it's mounted at /auth — apps that mount with a prefix should pass it
+    // as part of baseUrl. Same convention as /forgot-password emails.
+    expect(sent.html).toContain('http://localhost/magic-link/consume?token=')
 
     // A user was auto-created with emailVerified=true
     const user = await prisma.user.findUnique({ where: { email: 'newmagic@example.com' } })
