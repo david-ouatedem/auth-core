@@ -24,6 +24,7 @@ export default defineConfig({
         text: 'Adapters',
         items: [
           { text: 'Prisma', link: '/adapters/prisma' },
+          { text: 'Drizzle', link: '/adapters/drizzle' },
           { text: 'Resend', link: '/adapters/resend' },
           { text: 'Nodemailer', link: '/adapters/nodemailer' },
         ],

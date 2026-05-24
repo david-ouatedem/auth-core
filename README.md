@@ -20,6 +20,7 @@ AuthCore gives you registration, login, logout, email verification, and password
 | [`@authcore/nestjs`](packages/nestjs) | NestJS module, guards, and decorators |
 | [`@authcore/react`](packages/react) | React SDK: `AuthProvider`, `useAuth`, `ProtectedRoute` |
 | [`@authcore/prisma-adapter`](packages/prisma-adapter) | Prisma database adapter |
+| [`@authcore/drizzle-adapter`](packages/drizzle-adapter) | Drizzle ORM database adapter (Postgres + SQLite) |
 | [`@authcore/resend-adapter`](packages/resend-adapter) | Resend email adapter |
 | [`@authcore/nodemailer-adapter`](packages/nodemailer-adapter) | Nodemailer email adapter |
 | [`create-authcore-app`](packages/create-authcore-app) | CLI scaffolding tool |

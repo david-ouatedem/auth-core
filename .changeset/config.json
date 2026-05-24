@@ -8,6 +8,7 @@
       "@authcore/core",
       "@authcore/core-web",
       "@authcore/prisma-adapter",
+      "@authcore/drizzle-adapter",
       "@authcore/resend-adapter",
       "@authcore/nodemailer-adapter",
       "@authcore/express",
