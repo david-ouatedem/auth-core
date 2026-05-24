@@ -53,9 +53,16 @@ export default defineConfig({
       {
         text: 'Examples',
         items: [
+          { text: 'Next.js (full demo)', link: '/examples/nextjs' },
           { text: 'API-Only', link: '/examples/api-only' },
           { text: 'Monorepo', link: '/examples/monorepo' },
           { text: 'Frontend-Only', link: '/examples/frontend-only' },
+        ],
+      },
+      {
+        text: 'Upgrading',
+        items: [
+          { text: '0.x → 1.0', link: '/migration/0.x-to-1.0' },
         ],
       },
     ],

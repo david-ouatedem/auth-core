@@ -143,6 +143,11 @@ export function AuthProvider<TUser extends PublicUser = PublicUser>({
   const state = useSyncExternalStore(
     (cb) => service.subscribe(cb),
     () => service.getState(),
+    // Server snapshot — Next.js / static SSR call this during prerender. We
+    // return the initial unauthenticated state (no cookies/localStorage are
+    // available server-side anyway). The client immediately re-runs
+    // refreshUser() in the useEffect below to populate the real session.
+    () => service.getState(),
   )
 
   useEffect(() => {
