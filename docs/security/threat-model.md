@@ -2,7 +2,7 @@
 
 This document is the security spec for AuthCore. It enumerates what AuthCore defends against, what's explicitly out of scope, and the cryptographic primitives in use. It's deliberately blunt — you can't build something secure on top of a library whose security promises are vague.
 
-If you find a discrepancy between this document and the code, **the discrepancy itself is a security bug**. Report it via the channel in [`SECURITY.md`](../../SECURITY.md).
+If you find a discrepancy between this document and the code, **the discrepancy itself is a security bug**. Report it via the channel in [`SECURITY.md`](https://github.com/david-ouatedem/auth-core/blob/main/SECURITY.md).
 
 ## Audience
 
@@ -236,6 +236,6 @@ pnpm -w run test
 
 ## Reporting issues
 
-If you find anything that contradicts this document — a missing mitigation, an incorrect claim, an unstated assumption — please report it. See [`SECURITY.md`](../../SECURITY.md) for the disclosure process.
+If you find anything that contradicts this document — a missing mitigation, an incorrect claim, an unstated assumption — please report it. See [`SECURITY.md`](https://github.com/david-ouatedem/auth-core/blob/main/SECURITY.md) for the disclosure process.
 
 We treat this document as code: a security regression IS a discrepancy with what's written here.
