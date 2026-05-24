@@ -41,3 +41,6 @@ coverage/
 # VitePress
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# Claude Code session state
+.claude/

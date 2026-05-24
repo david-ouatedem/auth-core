@@ -1,6 +1,6 @@
 {
   "name": "@authcore/types",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Core type definitions for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",

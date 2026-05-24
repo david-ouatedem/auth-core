@@ -1,6 +1,6 @@
 {
   "name": "@authcore/nextjs",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Next.js (App Router) adapter for AuthCore",
   "license": "MIT",
   "author": "David Ouatedem",

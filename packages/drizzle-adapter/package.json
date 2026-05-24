@@ -1,6 +1,6 @@
 {
   "name": "@authcore/drizzle-adapter",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Drizzle ORM database adapter for AuthCore (Postgres + SQLite)",
   "license": "MIT",
   "author": "David Ouatedem",
