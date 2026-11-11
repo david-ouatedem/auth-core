@@ -1,7 +1,7 @@
 {
   "name": "@authcore/core-web",
   "version": "0.12.0",
-  "description": "Web Agnostic Authentication core for AuthCore",
+  "description": "Framework-agnostic browser auth client for AuthCore (fetch-based, api/cookie modes, session persistence)",
   "license": "MIT",
   "author": "Phanuel Wayne",
   "repository": {
@@ -14,7 +14,12 @@
     "authentication",
     "authcore",
     "jwt",
-    "bcrypt"
+    "typescript",
+    "browser",
+    "fetch",
+    "session",
+    "client",
+    "cookie"
   ],
   "files": [
     "dist",
@@ -45,5 +50,9 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
   }
 }

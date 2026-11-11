@@ -1,7 +1,7 @@
 {
   "name": "@authcore/react",
   "version": "0.12.0",
-  "description": "React SDK for AuthCore — AuthProvider, useAuth, ProtectedRoute",
+  "description": "React auth SDK for AuthCore: AuthProvider, useAuth, ProtectedRoute, useRole",
   "author": "David Ouatedem",
   "repository": {
     "type": "git",
@@ -12,7 +12,12 @@
     "auth",
     "authcore",
     "react",
-    "hooks"
+    "hooks",
+    "authentication",
+    "jwt",
+    "typescript",
+    "context",
+    "protected-route"
   ],
   "publishConfig": {
     "access": "public"
@@ -50,7 +55,12 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
+  }
 }

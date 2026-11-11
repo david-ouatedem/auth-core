@@ -15,7 +15,8 @@
     "test:ui": "vitest --ui",
     "lint": "pnpm -r exec tsc --noEmit",
     "docs:dev": "pnpm --filter authcore-docs dev",
-    "docs:build": "pnpm --filter authcore-docs build"
+    "docs:build": "pnpm --filter authcore-docs build",
+    "docs:llms": "node scripts/generate-llms.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

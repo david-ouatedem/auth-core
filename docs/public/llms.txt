@@ -1,0 +1,56 @@
+# AuthCore
+
+> Self-hosted, security-first authentication for Node.js: register/login, JWT with rotating refresh tokens, email verification, password reset, invitations, magic links, OAuth and TOTP 2FA. One framework-agnostic core with adapters for Express, Fastify, NestJS and Next.js, a React SDK, and Prisma/Drizzle database adapters. MIT licensed.
+
+Key facts for agents: install a framework adapter (e.g. @authcore/express) plus a database adapter (@authcore/prisma-adapter or @authcore/drizzle-adapter); mount the provided router/handler instead of writing auth routes; read AUTH_SECRET (>=32 chars) from the environment. Scaffold a working app with `npx create-authcore-app`. Every package ships an AGENTS.md with canonical usage.
+
+Full documentation in one file: https://david-ouatedem.github.io/auth-core/llms-full.txt
+
+## Start here
+
+- [Getting Started](https://david-ouatedem.github.io/auth-core/getting-started)
+- [Configuration](https://david-ouatedem.github.io/auth-core/configuration)
+- [Using AuthCore with AI coding assistants](https://david-ouatedem.github.io/auth-core/ai-assistants): Use AuthCore with Claude Code, Cursor, Copilot and other AI coding assistants: llms.txt, AGENTS.md shipped in every package, a ready-made prompt and a Claude skill.
+- [AuthCore vs. other auth options](https://david-ouatedem.github.io/auth-core/compare): How AuthCore compares to Better Auth, Auth.js, Passport and hosted auth (Clerk, Auth0). When to choose it and when not to.
+
+## Recipes
+
+- [Express: registration, email verification and password reset](https://david-ouatedem.github.io/auth-core/recipes/express-email-verification-password-reset): Add registration, login, email verification and password reset to an Express + Prisma app with AuthCore, in under 10 minutes.
+- [Next.js + Drizzle: auth in the App Router](https://david-ouatedem.github.io/auth-core/recipes/nextjs-drizzle-auth): Add authentication to a Next.js App Router app with Drizzle ORM and AuthCore: one route handler, getCurrentUser() in Server Components, and middleware.
+- [Role-based access control (admin-only routes)](https://david-ouatedem.github.io/auth-core/recipes/rbac-admin-routes): Restrict routes to admins with AuthCore role-based access control in Express, Fastify, NestJS and Next.js.
+
+## Framework integrations
+
+- [Next.js](https://david-ouatedem.github.io/auth-core/integrations/nextjs)
+- [Express Integration](https://david-ouatedem.github.io/auth-core/integrations/express)
+- [Fastify Integration](https://david-ouatedem.github.io/auth-core/integrations/fastify)
+- [NestJS](https://david-ouatedem.github.io/auth-core/integrations/nestjs)
+- [React SDK](https://david-ouatedem.github.io/auth-core/integrations/react)
+
+## Adapters
+
+- [Prisma Adapter](https://david-ouatedem.github.io/auth-core/adapters/prisma)
+- [Drizzle ORM Adapter](https://david-ouatedem.github.io/auth-core/adapters/drizzle)
+- [Resend Adapter](https://david-ouatedem.github.io/auth-core/adapters/resend)
+- [Nodemailer Adapter](https://david-ouatedem.github.io/auth-core/adapters/nodemailer)
+
+## Security and features
+
+- [AuthCore Threat Model](https://david-ouatedem.github.io/auth-core/security/threat-model)
+- [Refresh Tokens](https://david-ouatedem.github.io/auth-core/security/refresh-tokens)
+- [CSRF Protection](https://david-ouatedem.github.io/auth-core/security/csrf)
+- [OAuth (Sign in with Google)](https://david-ouatedem.github.io/auth-core/security/oauth)
+- [Magic-Link Login](https://david-ouatedem.github.io/auth-core/security/magic-link)
+- [Two-Factor Authentication (TOTP)](https://david-ouatedem.github.io/auth-core/security/two-factor)
+- [Email Templates](https://david-ouatedem.github.io/auth-core/security/email-templates)
+
+## Examples
+
+- [Next.js example](https://david-ouatedem.github.io/auth-core/examples/nextjs)
+- [API-Only Example](https://david-ouatedem.github.io/auth-core/examples/api-only)
+- [Monorepo Example](https://david-ouatedem.github.io/auth-core/examples/monorepo)
+- [Frontend-Only Example](https://david-ouatedem.github.io/auth-core/examples/frontend-only)
+
+## Other
+
+- [Migrating from 0.x to 1.0](https://david-ouatedem.github.io/auth-core/migration/0.x-to-1.0)

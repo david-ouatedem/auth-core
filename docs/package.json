@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev",
+    "llms": "node ../scripts/generate-llms.mjs",
+    "prebuild": "node ../scripts/generate-llms.mjs",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

@@ -1,11 +1,35 @@
 # AuthCore
 
-> Devise-inspired, framework-agnostic authentication for Node.js.
+> Self-hosted, security-first authentication for Node.js. One core, adapters for Express, Fastify, NestJS and Next.js.
 
 [![npm](https://img.shields.io/npm/v/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
+[![npm downloads](https://img.shields.io/npm/dw/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
+[![CI](https://github.com/david-ouatedem/auth-core/actions/workflows/ci.yml/badge.svg)](https://github.com/david-ouatedem/auth-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-AuthCore gives you registration, login, logout, email verification, and password reset out of the box. Sensible defaults, zero magic, override anything.
+**[Docs](https://david-ouatedem.github.io/auth-core/)** · **[Compare](https://david-ouatedem.github.io/auth-core/compare)** · **[Threat model](https://david-ouatedem.github.io/auth-core/security/threat-model)** · **[Using AI assistants](https://david-ouatedem.github.io/auth-core/ai-assistants)**
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+
+app.use('/auth', auth.router())                             // register, login, refresh, verify, reset, OAuth, 2FA...
+app.get('/me', auth.middleware(), (req, res) => res.json(req.user))
+```
+
+Try it in 60 seconds: `npx create-authcore-app`
+
+## Why AuthCore
+
+- **Batteries included.** JWT with rotating refresh tokens, email verification, password reset, invitations, magic links, OAuth (Google, GitHub, Microsoft, Discord, Apple), TOTP 2FA with recovery codes, RBAC and CSRF protection. You write no auth routes.
+- **Secure by default, and auditable.** bcrypt (12+ rounds), SHA-256 hashed tokens, timing-safe comparison, enumeration-safe forgot-password, Zod validation everywhere, published with npm provenance, and a written [threat model](https://david-ouatedem.github.io/auth-core/security/threat-model) that lists what is *not* covered.
+- **You own your data.** Your database, your server, MIT license. No hosted service, no per-user pricing.
+- **One core, every framework.** Express, Fastify, NestJS and Next.js behave identically. Prisma or Drizzle for storage, Resend or Nodemailer for email.
+- **Built for humans and AI agents.** [`llms.txt`](https://david-ouatedem.github.io/auth-core/llms.txt), an `AGENTS.md` in every package and scaffolded project, and a [Claude skill](skills/authcore/SKILL.md) so assistants wire it up correctly.
+
+Not the right fit? See [when to choose something else](https://david-ouatedem.github.io/auth-core/compare#choose-something-else-when).
 
 ## Packages
 
@@ -346,7 +370,7 @@ enum TokenType {
 
 AuthCore is database and email-provider agnostic. Implement the `DatabaseAdapter` or `EmailAdapter` interface from `@authcore/core` to add support for any provider.
 
-**Database adapters:** [Prisma](packages/prisma-adapter)
+**Database adapters:** [Prisma](packages/prisma-adapter) · [Drizzle](packages/drizzle-adapter)
 
 **Email adapters:** [Resend](packages/resend-adapter) · [Nodemailer](packages/nodemailer-adapter)
 

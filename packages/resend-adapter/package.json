@@ -1,7 +1,7 @@
 {
   "name": "@authcore/resend-adapter",
   "version": "0.12.0",
-  "description": "Resend email adapter for AuthCore",
+  "description": "Resend email adapter for AuthCore (verification, reset, invitation, magic-link emails)",
   "author": "David Ouatedem",
   "repository": {
     "type": "git",
@@ -12,7 +12,10 @@
     "auth",
     "authcore",
     "resend",
-    "email"
+    "email",
+    "authentication",
+    "jwt",
+    "typescript"
   ],
   "publishConfig": {
     "access": "public"
@@ -47,5 +50,9 @@
     "dist",
     "README.md"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
+  }
 }
