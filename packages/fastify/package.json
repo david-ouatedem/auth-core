@@ -1,7 +1,7 @@
 {
   "name": "@authcore/fastify",
   "version": "0.12.0",
-  "description": "Fastify adapter for AuthCore",
+  "description": "Fastify authentication plugin: register, login, refresh tokens, email verification, password reset, OAuth and 2FA, plus preHandler hooks and RBAC (AuthCore)",
   "author": "David Ouatedem",
   "repository": {
     "type": "git",
@@ -12,7 +12,13 @@
     "auth",
     "authcore",
     "fastify",
-    "plugin"
+    "plugin",
+    "authentication",
+    "jwt",
+    "typescript",
+    "prehandler",
+    "rbac",
+    "cookie"
   ],
   "publishConfig": {
     "access": "public"
@@ -53,7 +59,12 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
+  }
 }

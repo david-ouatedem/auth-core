@@ -2,11 +2,22 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'AuthCore',
-  description: 'A Devise-inspired, framework-agnostic authentication library for the JS ecosystem',
+  description: 'Self-hosted, security-first authentication for Node.js: JWT + refresh tokens, email verification, password reset, OAuth, 2FA. One core for Express, Fastify, NestJS and Next.js.',
   base: '/auth-core/',
+  cleanUrls: true,
+  lastUpdated: true,
+  sitemap: { hostname: 'https://david-ouatedem.github.io/auth-core/' },
+  head: [
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:title', content: 'AuthCore: self-hosted authentication for Node.js' }],
+    ['meta', { property: 'og:description', content: 'Register/login, refresh tokens, email verification, password reset, OAuth and 2FA with a published threat model. Express, Fastify, NestJS, Next.js.' }],
+    ['meta', { name: 'twitter:card', content: 'summary' }],
+    ['link', { rel: 'alternate', type: 'text/plain', href: '/auth-core/llms.txt', title: 'LLM-friendly docs' }],
+  ],
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/getting-started' },
+      { text: 'Recipes', link: '/recipes/express-email-verification-password-reset' },
       { text: 'Adapters', link: '/adapters/prisma' },
       { text: 'Integrations', link: '/integrations/express' },
       { text: 'Security', link: '/security/refresh-tokens' },
@@ -18,6 +29,16 @@ export default defineConfig({
         items: [
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'Configuration', link: '/configuration' },
+          { text: 'AuthCore vs. alternatives', link: '/compare' },
+          { text: 'Using AI assistants', link: '/ai-assistants' },
+        ],
+      },
+      {
+        text: 'Recipes',
+        items: [
+          { text: 'Express: verify + reset', link: '/recipes/express-email-verification-password-reset' },
+          { text: 'Next.js + Drizzle', link: '/recipes/nextjs-drizzle-auth' },
+          { text: 'Admin-only routes (RBAC)', link: '/recipes/rbac-admin-routes' },
         ],
       },
       {

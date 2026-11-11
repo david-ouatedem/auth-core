@@ -1,0 +1,3606 @@
+# AuthCore: full documentation
+
+Source: https://david-ouatedem.github.io/auth-core/ (generated from docs/ by scripts/generate-llms.mjs)
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/getting-started -->
+
+# Getting Started
+
+## Prerequisites
+
+- Node.js 18+
+- PostgreSQL (or Docker)
+- pnpm (recommended)
+
+## Install
+
+```bash
+# Core + database adapter
+pnpm add @authcore/core @authcore/prisma-adapter
+
+# Pick your framework integration
+pnpm add @authcore/express   # or @authcore/fastify or @authcore/nestjs
+
+# Optional: email adapter for verification & password reset
+pnpm add @authcore/resend-adapter   # or @authcore/nodemailer-adapter
+
+# Optional: React SDK
+pnpm add @authcore/react
+```
+
+## Quick Start (Express)
+
+```ts
+import express from 'express'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { createAuth } from '@authcore/express'
+
+const prisma = new PrismaClient()
+const app = express()
+app.use(express.json())
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+  },
+})
+
+// Mount all auth routes: /register, /login, /logout, /me, etc.
+app.use('/auth', auth.router())
+
+// Protect your own routes
+app.get('/dashboard', auth.middleware(), (req, res) => {
+  res.json({ user: req.user })
+})
+
+app.listen(3000)
+```
+
+## Quick Start (Fastify)
+
+```ts
+import Fastify from 'fastify'
+import cookie from '@fastify/cookie'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { createAuth } from '@authcore/fastify'
+
+const prisma = new PrismaClient()
+const app = Fastify()
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+  },
+})
+
+await app.register(cookie)
+await app.register(auth.plugin(), { prefix: '/auth' })
+
+app.get('/dashboard', {
+  preHandler: [auth.authRequired()],
+}, async (request) => {
+  return { user: request.user }
+})
+
+await app.listen({ port: 3000 })
+```
+
+## Database Setup
+
+AuthCore uses Prisma by default. Set up your schema:
+
+```prisma
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  emailVerified Boolean  @default(false)
+  role          String   @default("user")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tokens        Token[]
+}
+
+model Token {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([type, expiresAt])
+}
+```
+
+Then push to your database:
+
+```bash
+npx prisma db push
+```
+
+## Environment Variables
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/authcore"
+AUTH_SECRET="your-secret-at-least-32-characters-long"
+```
+
+## Next Steps
+
+- [Configuration Reference](/configuration) — all options
+- [Adapters](/adapters/prisma) — database and email adapters
+- [Integrations](/integrations/express) — Express, Fastify, NestJS, React
+- [Examples](/examples/api-only) — full working apps
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/configuration -->
+
+# Configuration
+
+The `AuthCoreConfig` object is the single configuration point for AuthCore.
+
+```ts
+interface AuthCoreConfig {
+  db: DatabaseAdapter
+  session: SessionConfig
+  email?: EmailConfig
+  features?: Array<'emailVerification' | 'passwordReset' | 'invitation'>
+  password?: { minLength?: number; saltRounds?: number }
+  rbac?: { defaultRole?: string }
+  callbacks?: AuthCallbacks
+}
+```
+
+## `db` (required)
+
+A `DatabaseAdapter` implementation. See [Prisma Adapter](/adapters/prisma).
+
+```ts
+import { prismaAdapter } from '@authcore/prisma-adapter'
+
+const config = {
+  db: prismaAdapter(prisma),
+  // ...
+}
+```
+
+## `session` (required)
+
+```ts
+interface SessionConfig {
+  strategy: 'jwt'
+  secret: string              // minimum 32 characters in production
+  expiresIn?: string          // access-token (JWT) expiry. default: '7d'. With refresh tokens, use '15m'.
+  refreshExpiresIn?: string   // refresh-token expiry. default: '30d'.
+  cookieName?: string         // default: 'authcore_token'. Refresh cookie = `${cookieName}_refresh`. CSRF cookie = `${cookieName}_csrf`.
+  csrf?: boolean              // opt-in synchronizer-token CSRF protection in cookie mode. default: false.
+}
+```
+
+`cookieName` is the **single source of truth** for the auth cookie name. It's read by both the route handlers that set the cookie and the middleware/guards that read it. Per-router overrides (`router({ cookieName })`) are honored for backward compatibility but the canonical place is `session.cookieName`.
+
+`refreshExpiresIn` controls how long refresh tokens are valid. Refresh tokens rotate on every `POST /auth/refresh` — the old one is invalidated as the new one is issued. See [Refresh Tokens](/security/refresh-tokens).
+
+`csrf: true` enables CSRF protection in cookie mode. Off by default for backward compatibility. See [CSRF](/security/csrf).
+
+## `email` (optional)
+
+Required if you enable `emailVerification`, `passwordReset`, or `invitation`.
+
+```ts
+interface EmailConfig {
+  provider: EmailAdapter
+  from: string                 // e.g. 'noreply@myapp.com'
+  templates?: EmailTemplates   // per-feature template overrides; defaults used when unset
+}
+
+interface EmailTemplates {
+  verifyEmail?:   (ctx: { email: string; link: string; ttlHours: number }) => { subject, html, text }
+  resetPassword?: (ctx: { email: string; link: string; ttlHours: number }) => { subject, html, text }
+  invitation?:    (ctx: { email: string; link: string; ttlHours: number; role: string }) => { subject, html, text }
+}
+```
+
+See [Resend](/adapters/resend) or [Nodemailer](/adapters/nodemailer) adapters and [Email Templates](/security/email-templates) for customization.
+
+## `features` (optional)
+
+Enable built-in features. Each feature adds routes to the auth router.
+
+```ts
+const config = {
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'noreply@myapp.com',
+  },
+  // ...
+}
+```
+
+| Feature | Effect | Token TTL |
+|---------|--------|-----------|
+| `emailVerification` | Sends verification email; login blocks unverified users; adds `/verify-email` route | 24h |
+| `passwordReset` | Adds `/forgot-password` and `/reset-password` routes | 1h |
+| `invitation` | Adds `/invite` (protected) and `/accept-invitation` (public) routes | 48h |
+
+## `rbac` (optional)
+
+```ts
+const config = {
+  rbac: { defaultRole: 'user' },  // default: 'user'
+}
+```
+
+Every user gets a `role` field (string). The default role for new registrations is `'user'`, configurable via `rbac.defaultRole`. The role is embedded in the JWT payload, so authorization checks need no extra DB lookup. Combine with `auth.requireRole(...)` middleware (Express/Fastify) or `RolesGuard` + `@Roles(...)` (NestJS).
+
+## `password` (optional)
+
+```ts
+const config = {
+  password: {
+    minLength: 8,    // default: 8
+    saltRounds: 12,  // default: 12 (silently clamped from below for safety)
+  },
+  // ...
+}
+```
+
+## `callbacks` (optional)
+
+Lifecycle hooks called after auth events.
+
+```ts
+const config = {
+  callbacks: {
+    onSignUp: async (user) => { /* ... */ },
+    onSignIn: async (user) => { /* ... */ },
+    onSignOut: async (userId) => { /* ... */ },
+    onPasswordReset: async (user) => { /* ... */ },
+    onTokenRefresh: async (user) => { /* ... */ },        // fires after every refresh
+    onFailedLogin: async (email, reason) => { /* ... */ },// 'INVALID_CREDENTIALS' | 'EMAIL_NOT_VERIFIED' — wire to rate limiter
+  },
+  // ...
+}
+```
+
+## Auth Routes
+
+The following routes are registered by `auth.router()` (Express), `auth.plugin()` (Fastify), or `AuthModule.register()` (NestJS):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/register` | Create a new user |
+| POST | `/login` | Authenticate and get a token |
+| POST | `/logout` | Clear session (cookie mode) |
+| GET | `/me` | Get current user (protected) |
+| POST | `/verify-email` | Verify email with token |
+| POST | `/forgot-password` | Request password reset (always 200) |
+| POST | `/reset-password` | Reset password with token |
+| POST | `/invite` | Invite a user by email + role (protected) |
+| POST | `/accept-invitation` | Accept invitation, set password (public) |
+| POST | `/refresh` | Exchange a refresh token for a new JWT + rotated refresh token |
+| POST | `/revoke` | Revoke a refresh token (idempotent) |
+
+All route paths are customizable via the `routes` option in the router/plugin config.
+
+## Direct-core callers: `forgotPassword` requires `resetUrl`
+
+If you call `createAuth()` from `@authcore/core` directly (not through a framework adapter), you must pass `resetUrl` as the second argument:
+
+```ts
+await auth.forgotPassword({ email: user.email }, { resetUrl: 'https://app.example.com/reset-password' })
+```
+
+Framework adapters build this from `baseUrl + paths.resetPassword` automatically. Calling `forgotPassword` directly without `resetUrl` while `passwordReset` is enabled throws `AuthError('resetUrl is required', 'MISSING_URL', 500)` — a deliberate loud failure that replaces the pre-0.9 silent leak of `session.secret` into email URLs.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/ai-assistants -->
+
+# Using AuthCore with AI coding assistants
+
+AuthCore is built to be easy for coding agents to use correctly, not just humans.
+
+## What we provide
+
+- **[`/llms.txt`](/llms.txt) and [`/llms-full.txt`](/llms-full.txt)**: an index and the full text of these docs in one file. Paste the URL into your assistant, or add it as a documentation source (Cursor: *Docs*, Claude Code: reference it in your prompt).
+- **`AGENTS.md` inside the npm packages** (`@authcore/core`, `express`, `fastify`, `nestjs`, `nextjs`, `react`): canonical usage and guardrails. After installing, agents can read `node_modules/@authcore/<package>/AGENTS.md`.
+- **`AGENTS.md` in every `create-authcore-app` template**, so a scaffolded project already carries the rules.
+- **A Claude Code skill** in the repo at [`skills/authcore`](https://github.com/david-ouatedem/auth-core/tree/main/skills/authcore). Copy it to `.claude/skills/authcore/` in your project.
+- **Actionable errors**: for example `MISSING_URL` tells you exactly which argument to pass, so an agent can self-correct.
+
+## A prompt that works
+
+> Add authentication to this app using AuthCore (https://david-ouatedem.github.io/auth-core/llms.txt). Use the adapter for my framework, mount the provided router/handler instead of writing my own routes, read `AUTH_SECRET` from the environment, and enable email verification and password reset with Resend. Read the package's `AGENTS.md` first.
+
+Or skip the prompt: `npx create-authcore-app` generates a working project.
+
+## Guardrails agents should follow
+
+1. Use the framework adapter; do not hand-roll login/register/reset routes.
+2. Never hardcode or log `AUTH_SECRET`.
+3. Use the shipped database schema.
+4. Email features need an email adapter.
+5. Keep security defaults (bcrypt rounds, always-200 forgot-password, hashed tokens).
+
+The full list is in each package's `AGENTS.md`.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/compare -->
+
+# AuthCore vs. other auth options
+
+Short version: AuthCore is a **self-hosted, security-first, batteries-included** auth library with **one core and adapters** for Express, Fastify, NestJS and Next.js. If that is what you need, it saves you weeks. If it is not, the alternatives below may fit better. This page tries to be fair; check each project's current docs before deciding.
+
+## At a glance
+
+| | AuthCore | Better Auth | Auth.js (NextAuth) | Passport | Clerk / Auth0 |
+|---|---|---|---|---|---|
+| Hosting | Your server + your DB | Your server + your DB | Your server | Your server | Vendor-hosted |
+| Scope | Full auth lifecycle | Full auth lifecycle + plugins | Sessions + OAuth focus | Strategies only | Full, plus UI and user management |
+| You write register/login/reset routes | No (mounted for you) | No | Partly (credentials flow is minimal) | Yes | No |
+| Frameworks | Express, Fastify, NestJS, Next.js (+ React SDK) | Many | Next.js first, others experimental | Express-style | SDKs for many |
+| Published threat model | Yes: [Threat Model](/security/threat-model) | Check their docs | Check their docs | N/A | Vendor security pages |
+| Pricing | Free, open source (MIT) | Free, open source | Free, open source | Free, open source | Free tier, then per-user |
+
+## What AuthCore includes out of the box
+
+Registration and login, JWT sessions with **rotating refresh tokens**, email verification, password reset, invitations with roles, magic-link login, OAuth (Google, GitHub, Microsoft, Discord, Apple), TOTP two-factor with recovery codes, RBAC, and opt-in CSRF protection in cookie mode.
+
+## Security defaults you do not have to think about
+
+- bcrypt with at least 12 rounds (clamped from below), passwords never stored or logged in plain text
+- Tokens are 32 random bytes, SHA-256 hashed before storage, raw value shown once, compared with `crypto.timingSafeEqual`
+- Forgot-password always returns 200 (no email enumeration)
+- Reset/verify/invite URLs built from `baseUrl + paths.*`; the signing secret never appears in a URL or email
+- Every input validated with Zod
+- JWT is HS256 only (no algorithm confusion)
+
+Details and the things AuthCore does **not** defend against are in the [Threat Model](/security/threat-model).
+
+## Choose AuthCore when
+
+- You want to own your user table and run auth in your own infrastructure
+- You use Express, Fastify, NestJS or Next.js and want the same behavior in each
+- You want secure defaults and a written security spec instead of assembling pieces yourself
+- You want refresh-token rotation, 2FA and email flows without building them
+
+## Choose something else when
+
+- **You want a hosted dashboard, prebuilt UI and user management** with no auth code to own: use Clerk, Auth0 or a similar service.
+- **You need a plugin ecosystem or features AuthCore does not have** (for example organizations/multi-tenancy or passkeys), and another library already ships them: check Better Auth.
+- **You only need OAuth sign-in in a Next.js app** and nothing else: Auth.js may be enough.
+- **You need an unusual protocol or strategy** (SAML, LDAP): Passport has a large strategy catalog.
+
+## Migrating
+
+AuthCore keeps its data model small (`User`, `Token`, optional `OAuthAccount`), so importing users from another system is mostly mapping `email`, `passwordHash` (bcrypt hashes are compatible) and `role`. See the [Getting Started](/getting-started) and [Adapters](/adapters/prisma) pages.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/recipes/express-email-verification-password-reset -->
+
+# Express: registration, email verification and password reset
+
+Goal: an Express API with `register`, `login`, email verification and password reset, using Prisma and Resend. About 40 lines of your own code.
+
+## 1. Install
+
+```bash
+pnpm add @authcore/express @authcore/prisma-adapter @authcore/resend-adapter @authcore/types
+pnpm add @prisma/client express
+pnpm add -D prisma
+```
+
+## 2. Add the schema
+
+Copy the `User` and `Token` models from [Getting Started](/getting-started#database-setup) into `prisma/schema.prisma`, then:
+
+```bash
+npx prisma db push
+```
+
+## 3. Configure environment
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/myapp"
+AUTH_SECRET="<output of: openssl rand -hex 32>"
+RESEND_API_KEY="re_..."
+```
+
+## 4. Create the app
+
+```ts
+import express from 'express'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { resendAdapter } from '@authcore/resend-adapter'
+import { createAuth } from '@authcore/express'
+
+const prisma = new PrismaClient()
+const app = express()
+app.use(express.json())
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'auth@yourdomain.com',
+  },
+  features: ['emailVerification', 'passwordReset'],
+})
+
+app.use('/auth', auth.router({ baseUrl: 'http://localhost:3000' }))
+
+app.get('/me', auth.middleware(), (req, res) => res.json({ user: req.user }))
+
+app.listen(3000)
+```
+
+> `baseUrl` is the public URL of your **frontend** (or API) that the email links point at. Check the [Express integration](/integrations/express) page for the exact router options (`routes`, `useCookies`).
+
+## 5. Try it
+
+```bash
+curl -X POST localhost:3000/auth/register -H 'content-type: application/json' \
+  -d '{"email":"me@example.com","password":"correct horse battery"}'
+```
+
+With `emailVerification` enabled, login is blocked until the user opens the link from the email and your frontend calls `POST /auth/verify-email` with the token. Password reset works the same way: `POST /auth/forgot-password` (always returns 200) and `POST /auth/reset-password`.
+
+## What you did not have to write
+
+Password hashing, token generation and hashing, token expiry (24h verify, 1h reset), enumeration-safe responses, input validation, and the email templates (customize them with [`email.templates`](/security/email-templates)).
+
+## Next
+
+[Add refresh tokens and cookies](/security/refresh-tokens) · [Add 2FA](/security/two-factor) · [Protect admin routes](/recipes/rbac-admin-routes)
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/recipes/nextjs-drizzle-auth -->
+
+# Next.js + Drizzle: auth in the App Router
+
+Goal: sign-up, sign-in, protected Server Components and middleware in a Next.js 15 App Router app using Drizzle on Postgres.
+
+## 1. Install
+
+```bash
+pnpm add @authcore/nextjs @authcore/core @authcore/drizzle-adapter drizzle-orm pg
+pnpm add -D drizzle-kit
+```
+
+## 2. Tables
+
+```ts
+// db/schema.ts
+export { users, tokens, oauthAccounts, tokenTypeEnum } from '@authcore/drizzle-adapter/pg'
+```
+
+```bash
+pnpm drizzle-kit generate && pnpm drizzle-kit migrate
+```
+
+See the [Drizzle adapter](/adapters/drizzle) page for `drizzle.config.ts` and the SQLite variant.
+
+## 3. The auth instance
+
+```ts
+// lib/auth.ts
+import { createAuth } from '@authcore/core'
+import { drizzleAdapter } from '@authcore/drizzle-adapter/pg'
+import { createNextAuthHandler, createServerHelpers } from '@authcore/nextjs'
+import { db } from '../db'
+
+export const auth = createAuth({
+  db: drizzleAdapter(db),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET!, cookieName: 'authcore_token' },
+})
+
+export const { GET, POST } = createNextAuthHandler(auth, {
+  baseUrl: process.env.NEXT_PUBLIC_BASE_URL!,
+  useCookies: true,
+})
+export const { getCurrentUser, requireUser } = createServerHelpers(auth)
+```
+
+## 4. The route
+
+```ts
+// app/api/auth/[...authcore]/route.ts
+export { GET, POST } from '@/lib/auth'
+export const runtime = 'nodejs'        // bcryptjs and jsonwebtoken need Node
+export const dynamic = 'force-dynamic'
+```
+
+## 5. Use it
+
+```tsx
+// app/dashboard/page.tsx
+import { redirect } from 'next/navigation'
+import { getCurrentUser } from '@/lib/auth'
+
+export default async function Dashboard() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
+  return <h1>Welcome {user.email}</h1>
+}
+```
+
+```ts
+// middleware.ts: cookie-presence gate (edge-safe). Always re-check on the server.
+import { createAuthMiddleware } from '@authcore/nextjs/middleware'
+```
+
+See [Next.js integration](/integrations/nextjs#protect-routes-with-middleware) for the middleware options and the client `AuthProvider`.
+
+## Next
+
+[OAuth login](/security/oauth) · [Magic links](/security/magic-link) · [Full Next.js demo](/examples/nextjs)
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/recipes/rbac-admin-routes -->
+
+# Role-based access control (admin-only routes)
+
+Every AuthCore user has a `role` (default `'user'`, set with `rbac.defaultRole`). The role is inside the JWT, so checks need no database query.
+
+## Express
+
+```ts
+app.get('/admin', auth.middleware(), auth.requireRole('admin'), handler)
+```
+
+## Fastify
+
+```ts
+app.get('/admin', { preHandler: [auth.authRequired(), auth.requireRole('admin')] }, handler)
+```
+
+## NestJS
+
+```ts
+@Controller('admin')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
+export class AdminController {}
+```
+
+## Next.js
+
+```ts
+const user = await requireUser()
+if (user.role !== 'admin') redirect('/')
+```
+
+## Assigning roles
+
+- New users get `rbac.defaultRole`.
+- [Invitations](/configuration) can carry a role: `POST /auth/invite` with `{ "email": "...", "role": "editor" }`.
+- To promote a user, update the `role` column through your database layer. The new role appears in the next JWT (after refresh or re-login); revoke refresh tokens with `auth.revokeAll(userId)` if the change must take effect immediately.
+
+## Remember
+
+Client-side role checks (`useRole`, `useHasRole` in `@authcore/react`) only hide UI. Enforce authorization on the server.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/integrations/nextjs -->
+
+# Next.js
+
+`@authcore/nextjs` is the App Router adapter. One catch-all route handler, server-side `getCurrentUser()` helpers, and an edge-safe middleware factory.
+
+## Install
+
+```bash
+pnpm add @authcore/nextjs @authcore/core @authcore/prisma-adapter @authcore/resend-adapter
+```
+
+Supports **Next.js 13.4 +**, **14**, and **15** on the App Router.
+
+## Set up the AuthCore instance
+
+Create one `lib/auth.ts` that defines your auth instance and exports the things your app needs:
+
+```ts
+// lib/auth.ts
+import { createAuth, createGoogleProvider } from '@authcore/core'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { resendAdapter } from '@authcore/resend-adapter'
+import { createNextAuthHandler, createServerHelpers } from '@authcore/nextjs'
+import { prisma } from './prisma'
+
+export const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'authcore_token',
+  },
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'auth@yourdomain.com',
+  },
+  features: ['emailVerification', 'passwordReset', 'magicLink'],
+  oauth: {
+    google: createGoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  },
+})
+
+export const { GET, POST } = createNextAuthHandler(auth, {
+  baseUrl: process.env.NEXT_PUBLIC_BASE_URL!,  // e.g. 'https://myapp.com'
+  useCookies: true,
+  oauthSuccessRedirect: '/',
+  magicLinkSuccessRedirect: '/',
+})
+
+export const { getCurrentUser, requireUser } = createServerHelpers(auth)
+```
+
+## Mount the catch-all route
+
+```ts
+// app/api/auth/[...authcore]/route.ts
+export { GET, POST } from '@/lib/auth'
+export const runtime = 'nodejs'    // bcryptjs + jsonwebtoken need Node, not Edge
+export const dynamic = 'force-dynamic'
+```
+
+That single file exposes every AuthCore route:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/register` | Create account |
+| POST | `/api/auth/login` | Sign in |
+| POST | `/api/auth/logout` | Sign out (revokes refresh) |
+| GET | `/api/auth/me` | Current user (Bearer or cookie) |
+| POST | `/api/auth/refresh` | Rotate refresh token |
+| POST | `/api/auth/revoke` | Revoke refresh token |
+| POST | `/api/auth/verify-email` | Verify email |
+| POST | `/api/auth/forgot-password` | Request reset |
+| POST | `/api/auth/reset-password` | Complete reset |
+| POST | `/api/auth/invite` | Invite (authed) |
+| POST | `/api/auth/accept-invitation` | Accept invite |
+| GET | `/api/auth/oauth/:provider` | Begin OAuth flow |
+| GET | `/api/auth/oauth/:provider/callback` | OAuth callback |
+| POST | `/api/auth/magic-link` | Send magic-link email |
+| GET | `/api/auth/magic-link/consume` | Consume magic-link token |
+
+## Use the session in Server Components
+
+```tsx
+// app/dashboard/page.tsx
+import { redirect } from 'next/navigation'
+import { getCurrentUser } from '@/lib/auth'
+
+export default async function Dashboard() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
+  return <h1>Welcome {user.email}</h1>
+}
+```
+
+`getCurrentUser()` reads the auth cookie via `next/headers`, verifies the JWT with `auth.verifyToken`, and returns the user or `null`. Works in **Server Components, Route Handlers, and Server Actions**.
+
+If middleware already gates the route (so reaching the component means the user is signed in) use `requireUser()` for a non-null return:
+
+```tsx
+import { requireUser } from '@/lib/auth'
+export default async function Account() {
+  const user = await requireUser()  // throws if no session
+  return <p>{user.email}</p>
+}
+```
+
+## Protect routes with middleware
+
+```ts
+// middleware.ts
+import { createAuthMiddleware } from '@authcore/nextjs/middleware'
+
+export default createAuthMiddleware({
+  publicRoutes: ['/', '/login', '/signup', '/api/auth'],
+})
+
+export const config = {
+  matcher: ['/((?!_next|favicon).*)'],
+}
+```
+
+The middleware does a **presence check** on the auth cookie — no JWT verification at the edge. Verification happens in Server Components via `getCurrentUser`. This keeps middleware fast and edge-compatible without dragging in `jsonwebtoken`.
+
+When a request hits a protected path with no cookie, the middleware redirects to `/login` (configurable via `loginUrl`) with `?next=…` so the login page can return the user to where they were going.
+
+## Client integration
+
+Wrap your app with `<AuthProvider>` (a Client Component):
+
+```tsx
+// app/providers.tsx
+'use client'
+import { AuthProvider } from '@authcore/nextjs/client'
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <AuthProvider baseUrl="" mode="cookie">
+      {children}
+    </AuthProvider>
+  )
+}
+```
+
+```tsx
+// app/layout.tsx
+import { Providers } from './providers'
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body><Providers>{children}</Providers></body></html>
+}
+```
+
+`baseUrl=""` because the API routes are same-origin in a Next.js app. `mode="cookie"` is the recommended Next.js default (httpOnly cookies set by the route handler).
+
+Then use `useAuth()` in any Client Component:
+
+```tsx
+'use client'
+import { useAuth } from '@authcore/nextjs/client'
+
+export function LoginForm() {
+  const { signIn, signInWithProvider, signInWithMagicLink } = useAuth()
+  // …
+}
+```
+
+## Pitfalls
+
+- **Always set `export const runtime = 'nodejs'`** in `app/api/auth/[...authcore]/route.ts`. The default Edge runtime can't run `bcryptjs` or `jsonwebtoken`.
+- **`AUTH_SECRET` must be available at request time.** In Next.js, `process.env.AUTH_SECRET` reads from server-side env vars — never leak it into a `NEXT_PUBLIC_…` variable.
+- **`NEXT_PUBLIC_BASE_URL`** is the only env var you should expose to the browser. The client SDK uses same-origin (`baseUrl=""`) so this is only needed by server code to build email links.
+- **Cookie domain across subdomains** — if your API is at `api.myapp.com` and your frontend is at `myapp.com`, set `cookieName` explicitly and configure cookies with the parent domain. By default Next.js sets cookies for the current host only.
+
+## Next steps
+
+- See [Configuration](/configuration) for the full `AuthCore` config surface.
+- [Magic-link login](/security/magic-link) — passwordless sign-in pairs especially well with Next.js.
+- [OAuth](/security/oauth) — 5 bundled providers; the client + server flows work the same in Next.js as elsewhere.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/integrations/express -->
+
+# Express Integration
+
+## Install
+
+```bash
+pnpm add @authcore/express
+```
+
+## Basic Setup
+
+```ts
+import express from 'express'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { createAuth } from '@authcore/express'
+
+const prisma = new PrismaClient()
+const app = express()
+app.use(express.json())
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+
+// Mount auth routes at /auth
+app.use('/auth', auth.router())
+
+// Protect routes with middleware
+app.get('/dashboard', auth.middleware(), (req, res) => {
+  res.json({ user: req.user })
+})
+
+// Optional auth — req.user may be undefined
+app.get('/public', auth.optionalMiddleware(), (req, res) => {
+  res.json({ user: req.user ?? null })
+})
+
+app.listen(3000)
+```
+
+## Cookie Mode
+
+For monorepo setups where frontend and backend share the same origin:
+
+```ts
+import cookieParser from 'cookie-parser'
+
+app.use(cookieParser())
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',   // optional; default 'authcore_token'
+  },
+})
+
+app.use('/auth', auth.router({ useCookies: true }))
+
+// auth.middleware() automatically reads the cookie name from session.cookieName
+app.get('/dashboard', auth.middleware(), (req, res) => {
+  res.json({ user: req.user })
+})
+```
+
+Tokens are set as httpOnly cookies instead of returned in the response body. `cookie-parser` is required for the middleware to read incoming cookies — install it alongside `@authcore/express` whenever `useCookies` is enabled.
+
+## API
+
+### `createAuth(config: AuthCoreConfig): ExpressAuth`
+
+Returns an object with:
+
+- **`router(config?)`** — Express Router with all auth routes
+- **`middleware()`** — Requires valid auth, attaches `req.user`, returns 401 on failure
+- **`optionalMiddleware()`** — Attaches `req.user` if valid token exists, never rejects
+
+### Router Config
+
+```ts
+auth.router({
+  useCookies: true,
+  cookieName: 'authcore_token',  // optional per-router override (deprecated — prefer session.cookieName)
+  baseUrl: 'https://app.example.com',  // used to build URLs in reset/verify/invite emails
+  routes: {
+    register: '/register',       // default
+    login: '/login',
+    logout: '/logout',
+    me: '/me',
+    verifyEmail: '/verify-email',
+    forgotPassword: '/forgot-password',
+    resetPassword: '/reset-password',
+    invite: '/invite',
+    acceptInvitation: '/accept-invitation',
+    refresh: '/refresh',
+    revoke: '/revoke',
+  },
+})
+```
+
+## Refresh Tokens (0.10+)
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    expiresIn: '15m',          // short-lived JWT
+    refreshExpiresIn: '30d',   // long-lived refresh
+  },
+})
+app.use('/auth', auth.router())
+
+// POST /auth/refresh — { refreshToken } in body (api mode) OR cookie (cookie mode)
+// Returns: { user, token, refreshToken }  — rotated. Old refresh token now invalid.
+
+// POST /auth/revoke — { refreshToken } — idempotent.
+// POST /auth/logout — also revokes the refresh token server-side.
+```
+
+See [Refresh Tokens](/security/refresh-tokens).
+
+## CSRF Protection (0.10+, cookie mode)
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET!, csrf: true },
+})
+app.use('/auth', auth.router({ useCookies: true }))
+```
+
+Login sets a non-httpOnly `authcore_token_csrf` cookie. State-changing requests must echo it back as `X-CSRF-Token`. `@authcore/react` does this automatically.
+
+See [CSRF](/security/csrf).
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/integrations/fastify -->
+
+# Fastify Integration
+
+## Install
+
+```bash
+pnpm add @authcore/fastify @fastify/cookie
+```
+
+## Basic Setup
+
+```ts
+import Fastify from 'fastify'
+import cookie from '@fastify/cookie'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { createAuth } from '@authcore/fastify'
+
+const prisma = new PrismaClient()
+const app = Fastify()
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+
+await app.register(cookie)
+await app.register(auth.plugin(), { prefix: '/auth' })
+
+// Protect routes with preHandler hook
+app.get('/dashboard', {
+  preHandler: [auth.authRequired()],
+}, async (request) => {
+  return { user: request.user }
+})
+
+// Optional auth
+app.get('/public', {
+  preHandler: [auth.authOptional()],
+}, async (request) => {
+  return { user: request.user ?? null }
+})
+
+await app.listen({ port: 3000 })
+```
+
+## Cookie Mode
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',   // optional; default 'authcore_token'
+  },
+})
+
+await app.register(cookie)
+await app.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+
+// auth.authRequired() automatically reads the cookie name from session.cookieName
+app.get('/dashboard', { preHandler: [auth.authRequired()] }, async (req) => ({ user: req.user }))
+```
+
+Tokens are set as httpOnly cookies via `reply.setCookie()`. `cookieName` is read from `session.cookieName` (the single source of truth) by both the plugin and the hooks.
+
+## API
+
+### `createAuth(config: AuthCoreConfig): FastifyAuth`
+
+Returns an object with:
+
+- **`plugin(config?)`** — Fastify plugin function that registers all auth routes
+- **`authRequired()`** — preHandler hook that requires valid auth, attaches `request.user`
+- **`authOptional()`** — preHandler hook that optionally attaches `request.user`
+
+### Plugin Config
+
+```ts
+auth.plugin({
+  useCookies: true,
+  cookieName: 'authcore_token',  // optional per-plugin override (deprecated — prefer session.cookieName)
+  baseUrl: 'https://app.example.com',  // used to build URLs in reset/verify/invite emails
+  routes: {
+    register: '/register',       // default
+    login: '/login',
+    logout: '/logout',
+    me: '/me',
+    verifyEmail: '/verify-email',
+    forgotPassword: '/forgot-password',
+    resetPassword: '/reset-password',
+    invite: '/invite',
+    acceptInvitation: '/accept-invitation',
+    refresh: '/refresh',
+    revoke: '/revoke',
+  },
+})
+```
+
+## Refresh Tokens (0.10+)
+
+Same shape as Express. `POST /auth/refresh` rotates the refresh token; `POST /auth/revoke` invalidates it. `POST /auth/logout` revokes server-side and clears cookies. Configure via `session.refreshExpiresIn` (default `'30d'`).
+
+See [Refresh Tokens](/security/refresh-tokens).
+
+## CSRF (0.10+, cookie mode)
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET!, csrf: true },
+})
+await app.register(cookie)
+await app.register(auth.plugin({ useCookies: true }), { prefix: '/auth' })
+```
+
+State-changing requests must include the `X-CSRF-Token` header matching the `authcore_token_csrf` cookie. See [CSRF](/security/csrf).
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/integrations/nestjs -->
+
+# NestJS
+
+`@authcore/nestjs` is a dynamic NestJS module that registers all auth routes and exposes guards and decorators for protecting your controllers.
+
+## Installation
+
+```bash
+npm install @authcore/nestjs @authcore/prisma-adapter
+```
+
+Peer dependencies (already present in any NestJS project):
+
+- `@nestjs/common` ^10 or ^11
+- `@nestjs/core` ^10 or ^11
+- `reflect-metadata` ^0.1.13 or ^0.2.0
+
+## Module Setup
+
+Import `AuthModule` in your root `AppModule`:
+
+```ts
+// app.module.ts
+import { Module } from '@nestjs/common'
+import { AuthModule } from '@authcore/nestjs'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+@Module({
+  imports: [
+    AuthModule.register({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+This registers all auth routes under `/auth` and makes guards available globally.
+
+## Protecting Routes
+
+Use `AuthGuard` on any controller or route handler. The authenticated user is injected with `@CurrentUser()`:
+
+```ts
+import { Controller, Get, UseGuards } from '@nestjs/common'
+import { AuthGuard, CurrentUser } from '@authcore/nestjs'
+import type { PublicUser } from '@authcore/nestjs'
+
+@Controller('dashboard')
+@UseGuards(AuthGuard)
+export class DashboardController {
+  @Get()
+  getDashboard(@CurrentUser() user: PublicUser) {
+    return { user }
+  }
+}
+```
+
+## Role-Based Access Control
+
+Pair `RolesGuard` with the `@Roles()` decorator. Always apply `AuthGuard` first so `request.user` is populated:
+
+```ts
+import { Controller, Get, UseGuards } from '@nestjs/common'
+import { AuthGuard, RolesGuard, Roles, CurrentUser } from '@authcore/nestjs'
+import type { PublicUser } from '@authcore/nestjs'
+
+@Controller('admin')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('admin')
+export class AdminController {
+  @Get()
+  getAdmin(@CurrentUser() user: PublicUser) {
+    return { message: 'Admin area', user }
+  }
+}
+```
+
+Enable RBAC in `AuthModule.register()`:
+
+```ts
+AuthModule.register({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  rbac: { defaultRole: 'user' },
+})
+```
+
+## Optional Authentication
+
+Use `AuthOptionalGuard` on routes that work for both authenticated and anonymous users:
+
+```ts
+import { Controller, Get, UseGuards } from '@nestjs/common'
+import { AuthOptionalGuard, CurrentUser } from '@authcore/nestjs'
+import type { PublicUser } from '@authcore/nestjs'
+
+@Controller('public')
+export class PublicController {
+  @Get()
+  @UseGuards(AuthOptionalGuard)
+  getPublic(@CurrentUser() user: PublicUser | undefined) {
+    return { user: user ?? null }
+  }
+}
+```
+
+## Cookie Mode
+
+Set `useCookies: true` and register `cookie-parser` middleware in `main.ts`. NestJS cookie support requires `@nestjs/platform-express` (the default).
+
+```ts
+// main.ts
+import { NestFactory } from '@nestjs/core'
+import cookieParser from 'cookie-parser'
+import { AppModule } from './app.module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(cookieParser())
+  await app.listen(3000)
+}
+bootstrap()
+```
+
+```ts
+// app.module.ts
+AuthModule.register({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    cookieName: 'my_token',  // optional; default 'authcore_token'
+  },
+  useCookies: true,
+})
+```
+
+When `useCookies` is true:
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/accept-invitation` set the cookie and return `{ user }` (no token in body).
+- `POST /auth/logout` clears the cookie.
+- `AuthGuard` and `AuthOptionalGuard` fall back to reading the cookie if no `Authorization: Bearer ...` header is present.
+
+## With Email Features & Invitations
+
+```ts
+import { resendAdapter } from '@authcore/resend-adapter'
+
+AuthModule.register({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'auth@yourdomain.com',
+  },
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+  rbac: { defaultRole: 'user' },
+  baseUrl: 'https://yourdomain.com',
+})
+```
+
+## API Reference
+
+### `AuthModule.register(options)`
+
+All options from [`@authcore/core` configuration](/configuration) are accepted, plus:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `baseUrl` | `string` | `''` | Base URL used to build links in auth emails |
+| `useCookies` | `boolean` | `false` | Set/clear an httpOnly cookie on register/login/logout/accept-invitation instead of returning the token in the response body |
+
+Cookie name is read from `session.cookieName` (default `'authcore_token'`). See the [Configuration reference](/configuration) for the full session shape.
+
+### Guards
+
+| Guard | Description |
+|-------|-------------|
+| `AuthGuard` | Requires a valid JWT. Attaches the user to `request.user`. Throws `UnauthorizedException` (401) if no token is present or the token is invalid. |
+| `AuthOptionalGuard` | Attaches `request.user` if a valid token is present. Never rejects the request. |
+| `RolesGuard` | Checks `request.user.role` against `@Roles()`. Throws `ForbiddenException` (403) if the role is not allowed. Must be used after `AuthGuard`. |
+
+### Decorators
+
+| Decorator | Description |
+|-----------|-------------|
+| `@CurrentUser()` | Parameter decorator — extracts the authenticated user from the request |
+| `@Roles('admin', 'editor')` | Sets the required roles for a route or controller |
+| `@Public()` | Marks a route as public, bypassing `AuthGuard` |
+
+### Routes
+
+All routes are mounted under `/auth` by default:
+
+| Method | Route | Body | Description |
+|--------|-------|------|-------------|
+| POST | `/auth/register` | `{ email, password }` | Register a new user |
+| POST | `/auth/login` | `{ email, password }` | Log in, returns JWT |
+| POST | `/auth/logout` | — | Invalidate the session |
+| GET | `/auth/me` | — | Return the current user |
+| POST | `/auth/verify-email` | `{ token }` | Verify email address |
+| POST | `/auth/forgot-password` | `{ email }` | Send password reset email (always 200) |
+| POST | `/auth/reset-password` | `{ token, password }` | Reset password |
+| POST | `/auth/invite` | `{ email, role? }` | Send an invitation |
+| POST | `/auth/accept-invitation` | `{ token, password }` | Accept an invitation and set a password |
+| POST | `/auth/refresh` | `{ refreshToken }` (or cookie) | Rotate the refresh token; returns new `{ user, token, refreshToken }` |
+| POST | `/auth/revoke` | `{ refreshToken }` (or cookie) | Revoke a refresh token (idempotent) |
+
+## Refresh Tokens (0.10+)
+
+`register`, `login`, `acceptInvitation`, and `refresh` all return `{ user, token, refreshToken }` in api mode (or set httpOnly cookies in cookie mode). Configure with `session.refreshExpiresIn` (default `'30d'`). See [Refresh Tokens](/security/refresh-tokens).
+
+## CSRF (0.10+, cookie mode)
+
+Set `session.csrf: true` and bind `CsrfGuard` globally in `main.ts`:
+
+```ts
+import cookieParser from 'cookie-parser'
+import { CsrfGuard } from '@authcore/nestjs'
+
+const app = await NestFactory.create(AppModule)
+app.use(cookieParser())
+app.useGlobalGuards(app.get(CsrfGuard))
+```
+
+State-changing requests must include the `X-CSRF-Token` header matching `${cookieName}_csrf`. See [CSRF](/security/csrf).
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/integrations/react -->
+
+# React SDK
+
+## Install
+
+```bash
+pnpm add @authcore/react
+```
+
+## Setup
+
+Wrap your app with `AuthProvider`:
+
+```tsx
+import { AuthProvider } from '@authcore/react'
+
+function App() {
+  return (
+    <AuthProvider baseUrl="http://localhost:3000/auth" mode="api">
+      <MyApp />
+    </AuthProvider>
+  )
+}
+```
+
+### Modes
+
+- **`api`** (default) — Bearer token auth. Token stored in localStorage.
+- **`cookie`** — Cookie-based auth. Requests include `credentials: 'include'`. Use when frontend and backend share the same origin.
+
+## `useAuth` Hook
+
+```tsx
+import { useAuth } from '@authcore/react'
+
+function MyComponent() {
+  const {
+    user,              // PublicUser | null
+    isAuthenticated,   // boolean
+    isLoading,         // boolean
+    error,             // string | null
+    signUp,            // (email, password) => Promise<AuthResponse>
+    signIn,            // (email, password) => Promise<AuthResponse>
+    signOut,           // () => Promise<void>
+    forgotPassword,    // (email) => Promise<void>
+    resetPassword,     // (token, password) => Promise<void>
+    verifyEmail,       // (token) => Promise<void>
+    invite,            // (email, role?) => Promise<void>
+    acceptInvitation,  // (token, password) => Promise<AuthResponse>
+    refreshUser,       // () => Promise<void> — re-fetch /me
+    refresh,           // () => Promise<AuthResponse> — rotate refresh token (0.10+)
+    revokeSession,     // () => Promise<void> — server-side revoke (0.10+)
+  } = useAuth()
+
+  // ...
+}
+```
+
+## Refresh tokens (0.10+)
+
+`signIn` / `signUp` / `acceptInvitation` now return `{ user, token, refreshToken }`. The SDK handles refresh tokens automatically:
+
+- In `mode='api'` with `persistSession: true` (default), the refresh token is stored in `localStorage` under `${storageKey}_refresh`.
+- In `mode='cookie'`, the browser carries the refresh cookie automatically.
+- Calling `refresh()` rotates the refresh token; the old one becomes invalid immediately.
+- Calling `revokeSession()` revokes server-side and clears local state.
+
+## CSRF (0.10+, cookie mode)
+
+When your backend has `session.csrf: true` and is in cookie mode, the SDK automatically reads the `authcore_token_csrf` cookie from `document.cookie` and adds `X-CSRF-Token` to every POST/PUT/PATCH/DELETE request. No app code needed.
+
+See [CSRF](/security/csrf).
+
+### Extended user type
+
+If your backend returns extra fields on the user object (e.g. `avatarUrl`, `displayName`), pass a type parameter to `useAuth` to get them fully typed:
+
+```tsx
+import type { PublicUser } from '@authcore/types'
+
+interface MyUser extends PublicUser {
+  avatarUrl: string
+  displayName: string
+}
+
+function Profile() {
+  const { user } = useAuth<MyUser>()
+  // user.avatarUrl and user.displayName are typed
+}
+```
+
+Pair this with [`transformUser`](#custom-backend-integration) on `<AuthProvider>` to map your backend's response to `MyUser`.
+
+## `ProtectedRoute`
+
+Guard component that renders children only when authenticated:
+
+```tsx
+import { ProtectedRoute } from '@authcore/react'
+
+function App() {
+  return (
+    <AuthProvider baseUrl="/auth">
+      <ProtectedRoute
+        fallback={<p>Loading...</p>}
+        onUnauthenticated={() => navigate('/login')}
+      >
+        <Dashboard />
+      </ProtectedRoute>
+    </AuthProvider>
+  )
+}
+```
+
+### Props
+
+- **`fallback`** — Shown while loading (default: `null`)
+- **`onUnauthenticated`** — Called when user is not authenticated (e.g. redirect to login)
+- **`children`** — Rendered when authenticated
+
+## AuthProvider Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `baseUrl` | `string` | required | Auth API base URL |
+| `mode` | `'api' \| 'cookie'` | `'api'` | Authentication mode |
+| `persistSession` | `boolean` | `true` | Store token in localStorage (api mode) |
+| `storageKey` | `string` | `'authcore_token'` | localStorage key (api mode) |
+| `routes` | `object` | see below | Custom route paths |
+| `transformAuthResponse` | `(raw: unknown) => { user, token? }` | — | Map sign-in/sign-up response shape |
+| `transformUser` | `(raw: unknown) => TUser` | — | Map /me response shape |
+| `transformError` | `(body: unknown, status: number) => string` | — | Map error response to message string |
+| `httpClient` | `{ get, post }` | — | Replace the built-in fetch client entirely |
+
+### Custom route paths
+
+```tsx
+<AuthProvider
+  baseUrl="/api"
+  routes={{
+    login: '/auth/sign-in',
+    register: '/auth/sign-up',
+    logout: '/auth/sign-out',
+    me: '/auth/me',
+    verifyEmail: '/auth/verify',
+    forgotPassword: '/auth/forgot',
+    resetPassword: '/auth/reset',
+    invite: '/auth/invite',
+    acceptInvitation: '/auth/accept',
+  }}
+>
+```
+
+## Custom Backend Integration
+
+`@authcore/react` works with **any backend** — it does not require `@authcore/express` or any other AuthCore server package. Use the response transformer props to adapt your backend's JSON shape.
+
+### Different response shapes
+
+```tsx
+// Your backend returns: { data: { user: {...} }, access_token: "..." }
+<AuthProvider
+  baseUrl="https://api.example.com"
+  transformAuthResponse={(raw) => {
+    const res = raw as { data: { user: MyUser }; access_token: string }
+    return { user: res.data.user, token: res.access_token }
+  }}
+  transformUser={(raw) => {
+    const res = raw as { data: MyUser }
+    return res.data
+  }}
+/>
+```
+
+### Different error shapes
+
+```tsx
+// Your backend returns: { message: "Not found", statusCode: 404 }
+<AuthProvider
+  baseUrl="https://api.example.com"
+  transformError={(body, status) => {
+    const err = body as { message?: string }
+    return err.message ?? `Request failed with status ${status}`
+  }}
+/>
+```
+
+### Custom HTTP client (Axios, etc.)
+
+For full control — custom interceptors, retries, auth headers — supply your own HTTP client:
+
+```tsx
+import axios from 'axios'
+
+const axiosClient = {
+  get: <T>(path: string) =>
+    axios.get<T>(`https://api.example.com${path}`).then(r => r.data),
+  post: <T>(path: string, body?: unknown) =>
+    axios.post<T>(`https://api.example.com${path}`, body).then(r => r.data),
+}
+
+<AuthProvider httpClient={axiosClient}>
+  <App />
+</AuthProvider>
+```
+
+When `httpClient` is provided, `baseUrl`, `mode`, and `storageKey` are ignored for request handling.
+
+### Full custom backend example
+
+```tsx
+import type { PublicUser } from '@authcore/types'
+
+interface MyUser extends PublicUser {
+  avatarUrl: string
+  plan: 'free' | 'pro'
+}
+
+function App() {
+  return (
+    <AuthProvider<MyUser>
+      baseUrl="https://api.myapp.com"
+      mode="cookie"
+      routes={{ login: '/session', me: '/session/me', logout: '/session' }}
+      transformAuthResponse={(raw) => {
+        const r = raw as { user: MyUser; jwt: string }
+        return { user: r.user, token: r.jwt }
+      }}
+      transformUser={(raw) => (raw as { user: MyUser }).user}
+      transformError={(body) => (body as { message: string }).message}
+    >
+      <MyApp />
+    </AuthProvider>
+  )
+}
+
+// Fully typed access to extended fields anywhere in the tree
+function Header() {
+  const { user } = useAuth<MyUser>()
+  return <img src={user?.avatarUrl} />
+}
+```
+
+## Error Handling
+
+Auth methods throw `AuthRequestError` on failure:
+
+```tsx
+import { AuthRequestError } from '@authcore/react'
+
+try {
+  await signIn(email, password)
+} catch (err) {
+  if (err instanceof AuthRequestError) {
+    console.log(err.message)    // 'Invalid email or password'
+    console.log(err.code)       // 'INVALID_CREDENTIALS' (if backend sends one)
+    console.log(err.statusCode) // 401
+  }
+}
+```
+
+Use `transformError` if your backend's error shape doesn't match `{ error: string, code?: string }`.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/adapters/prisma -->
+
+# Prisma Adapter
+
+The official database adapter using Prisma ORM.
+
+## Install
+
+```bash
+# Prisma 5
+pnpm add @authcore/prisma-adapter @prisma/client
+pnpm add -D prisma
+
+# Prisma 6 (also requires a driver adapter for your database)
+pnpm add @authcore/prisma-adapter @prisma/client @prisma/adapter-pg pg
+pnpm add -D prisma @types/pg
+```
+
+## Setup
+
+```ts
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+
+// Prisma 5 (default prisma-client-js generator):
+const prisma = new PrismaClient()
+
+// Prisma 6 (new prisma-client generator — requires an explicit driver adapter):
+import { PrismaPg } from '@prisma/adapter-pg'
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
+const prisma = new PrismaClient({ adapter })
+
+const config = {
+  db: prismaAdapter(prisma),
+  // ...
+}
+```
+
+> **Custom generator output:** If your `schema.prisma` uses a custom `output` path (common in Prisma 6
+> monorepo setups), the import path changes — e.g. `from '../generated/prisma/client'` instead of
+> `from '@prisma/client'`. The adapter itself is not affected.
+
+## Schema
+
+Add the AuthCore models to your Prisma schema:
+
+```prisma
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  emailVerified Boolean  @default(false)
+  role          String   @default("user")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tokens        Token[]
+}
+
+model Token {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([type, expiresAt])
+}
+```
+
+> **Note:** `type` is stored as a plain `String` rather than a Prisma enum. The adapter's internal
+> `toCoreTokenType` validator enforces that only valid values (`EMAIL_VERIFICATION`, `PASSWORD_RESET`,
+> `SESSION`, `INVITATION`) are accepted at runtime.
+
+Then sync with your database:
+
+```bash
+npx prisma db push
+# or for production:
+npx prisma migrate dev --name init
+```
+
+## Custom Adapter
+
+To use a different database, implement the `DatabaseAdapter` interface from `@authcore/core`:
+
+```ts
+import type { DatabaseAdapter } from '@authcore/core'
+
+export function myAdapter(client: MyClient): DatabaseAdapter {
+  return {
+    findUserByEmail: async (email) => { /* ... */ },
+    findUserById: async (id) => { /* ... */ },
+    createUser: async (data) => { /* ... */ },
+    updateUser: async (id, data) => { /* ... */ },
+    createToken: async (data) => { /* ... */ },
+    findToken: async (token, type) => { /* ... */ },
+    deleteToken: async (id) => { /* ... */ },
+    deleteExpiredTokens: async () => { /* ... */ },
+  }
+}
+```
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/adapters/drizzle -->
+
+# Drizzle ORM Adapter
+
+`@authcore/drizzle-adapter` is an alternative to `@authcore/prisma-adapter`. Pick it when you already use Drizzle in the project, when you want lighter migrations (just SQL), or when you want SQLite for dev / Postgres for prod from the same codebase.
+
+## Install
+
+Pick the dialect you're using:
+
+```bash
+# Postgres
+pnpm add @authcore/drizzle-adapter @authcore/core drizzle-orm pg
+pnpm add -D drizzle-kit
+
+# SQLite (better-sqlite3)
+pnpm add @authcore/drizzle-adapter @authcore/core drizzle-orm better-sqlite3
+pnpm add -D drizzle-kit @types/better-sqlite3
+```
+
+Drizzle 0.30–0.36 are tested. `drizzle-orm` is a peer dependency, so you control the version.
+
+## Postgres
+
+```ts
+// db/schema.ts — re-export the AuthCore tables so drizzle-kit picks them up
+export {
+  users,
+  tokens,
+  oauthAccounts,
+  tokenTypeEnum,
+} from '@authcore/drizzle-adapter/pg'
+```
+
+```ts
+// db/index.ts
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { Pool } from 'pg'
+import * as schema from './schema'
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+export const db = drizzle(pool, { schema })
+```
+
+```ts
+// lib/auth.ts
+import { createAuth } from '@authcore/core'
+import { drizzleAdapter } from '@authcore/drizzle-adapter/pg'
+import { db } from '../db'
+
+export const auth = createAuth({
+  db: drizzleAdapter(db),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+```
+
+Generate + apply the migration:
+
+```bash
+pnpm drizzle-kit generate
+pnpm drizzle-kit migrate
+```
+
+## SQLite
+
+```ts
+// db/schema.ts
+export {
+  users,
+  tokens,
+  oauthAccounts,
+} from '@authcore/drizzle-adapter/sqlite'
+```
+
+```ts
+// db/index.ts
+import Database from 'better-sqlite3'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import * as schema from './schema'
+
+const sqlite = new Database('./auth.db')
+sqlite.pragma('foreign_keys = ON')   // required for cascade deletes
+sqlite.pragma('journal_mode = WAL')  // recommended for concurrent reads
+export const db = drizzle(sqlite, { schema })
+```
+
+```ts
+// lib/auth.ts
+import { drizzleAdapter } from '@authcore/drizzle-adapter/sqlite'
+
+export const auth = createAuth({
+  db: drizzleAdapter(db),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+```
+
+**SQLite quirks to know:**
+
+- **IDs are random UUID strings** (`text`), not native UUIDs. Drizzle's `$defaultFn` generates them with `crypto.randomUUID()` at insert time — fully compatible with the AuthCore TS type (also `string`).
+- **Timestamps are stored as `INTEGER` (Unix ms).** Drizzle's `{ mode: 'timestamp_ms' }` converts JS `Date` to/from the integer transparently.
+- **Booleans are `INTEGER 0|1`.** Drizzle's `{ mode: 'boolean' }` handles the round-trip.
+- **The token-type column is `text`** (no native enum). AuthCore's TS types still enforce the union at the call site, so this isn't a real safety regression.
+
+## Extending the schema
+
+The exported tables are plain Drizzle objects. To add extra columns, **redefine the table** in your schema file with the AuthCore fields plus your own:
+
+```ts
+// db/schema.ts
+import { pgTable, text, boolean, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+
+export const users = pgTable('users', {
+  // AuthCore-required fields:
+  id: uuid('id').defaultRandom().primaryKey(),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  emailVerified: boolean('email_verified').notNull().default(false),
+  role: text('role').notNull().default('user'),
+  twoFactorEnabled: boolean('two_factor_enabled').notNull().default(false),
+  twoFactorSecret: text('two_factor_secret'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .default(sql`now()`)
+    .$onUpdate(() => new Date()),
+
+  // Your own fields:
+  displayName: text('display_name'),
+  avatarUrl: text('avatar_url'),
+})
+
+// Re-use AuthCore's other tables as-is:
+export { tokens, oauthAccounts, tokenTypeEnum } from '@authcore/drizzle-adapter/pg'
+```
+
+Then pass the bundle to the adapter explicitly:
+
+```ts
+import { drizzleAdapter } from '@authcore/drizzle-adapter/pg'
+import * as schema from './schema'
+
+const auth = createAuth({
+  db: drizzleAdapter(db, schema),
+  // …
+})
+```
+
+The adapter reads/writes only the AuthCore fields — your extra columns stay untouched. To read them in your own code, query the table directly via Drizzle.
+
+## Comparison with `@authcore/prisma-adapter`
+
+| | Prisma | Drizzle |
+|---|---|---|
+| Schema file | `schema.prisma` (DSL) | TypeScript |
+| Migrations | `prisma migrate` | `drizzle-kit generate` |
+| Dialects | Postgres (AuthCore-tested) | Postgres + SQLite (and MySQL, see below) |
+| Query API | Code-generated client | Function-based with `eq`, `and`, `lt` |
+| Cold start | Slower (engine load) | Faster |
+| Bundle size | Heavier | Lighter |
+| Drift from DB | Possible if migrations diverge | Drizzle introspects the live DB |
+
+**You can switch between them.** The `DatabaseAdapter` contract is identical — the same `auth.login`, `auth.register`, etc. work against both. Tests in this repo demonstrate both adapters passing the same suite.
+
+## MySQL support
+
+Not bundled yet, but trivial to add yourself: copy the SQLite schema into your codebase, replace `sqliteTable` with `mysqlTable` from `drizzle-orm/mysql-core`, adjust the column types (use `varbinary` for `id`, `bigint` or `datetime` for timestamps), then call `createDrizzleAdapter(db, yourSchema)` from `@authcore/drizzle-adapter`. The generic adapter is dialect-agnostic; the schemas are dialect-specific. PR welcome if you want it upstreamed.
+
+## Why a separate adapter package and not a generic SQL one
+
+We could ship a single `@authcore/sql-adapter` that takes raw SQL queries. We don't, because Drizzle gives the user typed queries, generated migrations, schema introspection, and a unified API for extending the schema with their own columns. Going through Drizzle is the path most users want; the adapter just wires AuthCore's `DatabaseAdapter` contract to Drizzle's tables.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/adapters/resend -->
+
+# Resend Adapter
+
+Send auth emails (verification, password reset) via [Resend](https://resend.com).
+
+## Install
+
+```bash
+pnpm add @authcore/resend-adapter
+```
+
+## Setup
+
+```ts
+import { resendAdapter } from '@authcore/resend-adapter'
+
+const config = {
+  // ...
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'noreply@myapp.com',
+  },
+}
+```
+
+AuthCore sends both HTML and plain-text variants of every email; Resend supports both directly.
+
+## Requirements
+
+- A [Resend](https://resend.com) account and API key
+- A verified sending domain in Resend
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/adapters/nodemailer -->
+
+# Nodemailer Adapter
+
+Send auth emails via any SMTP server using [Nodemailer](https://nodemailer.com).
+
+## Install
+
+```bash
+pnpm add @authcore/nodemailer-adapter
+```
+
+## Setup
+
+```ts
+import { nodemailerAdapter } from '@authcore/nodemailer-adapter'
+
+const config = {
+  // ...
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+  email: {
+    provider: nodemailerAdapter({
+      host: 'smtp.example.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER!,
+        pass: process.env.SMTP_PASS!,
+      },
+    }),
+    from: 'noreply@myapp.com',
+  },
+}
+```
+
+## Development
+
+For local development, use [Ethereal](https://ethereal.email) or [MailHog](https://github.com/mailhog/MailHog):
+
+```ts
+// Ethereal — fake SMTP that captures emails
+nodemailerAdapter({
+  host: 'smtp.ethereal.email',
+  port: 587,
+  auth: {
+    user: 'your-ethereal-user',
+    pass: 'your-ethereal-pass',
+  },
+})
+```
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/threat-model -->
+
+# AuthCore Threat Model
+
+This document is the security spec for AuthCore. It enumerates what AuthCore defends against, what's explicitly out of scope, and the cryptographic primitives in use. It's deliberately blunt — you can't build something secure on top of a library whose security promises are vague.
+
+If you find a discrepancy between this document and the code, **the discrepancy itself is a security bug**. Report it via the channel in [`SECURITY.md`](https://github.com/david-ouatedem/auth-core/blob/main/SECURITY.md).
+
+## Audience
+
+- **Security reviewers**: this is the entry point. Each section names the file paths to inspect.
+- **App developers**: read the [Out of scope](#out-of-scope) section before you ship. The things AuthCore does NOT defend against are still your problem.
+- **Compliance teams**: see [Cryptographic primitives](#cryptographic-primitives) for the algorithm + parameter inventory.
+
+## Assets
+
+What we're protecting, in order of damage if compromised:
+
+| Asset | Compromise impact |
+|---|---|
+| **`session.secret` (AUTH_SECRET env var)** | Total breach: an attacker can forge any session JWT, decrypt any OAuth state envelope, mint 2FA challenge tokens. Rotation invalidates all live sessions. |
+| **User password hashes** | Offline brute force against bcryptjs ≥12 rounds. Per-user cost is high but not infinite. |
+| **TOTP secrets** | Allows generating valid 2FA codes for a user. Stored plaintext (see [Known tradeoffs](#known-tradeoffs)). |
+| **Refresh token hashes** | Stored SHA-256 hashed; the raw token grants `auth.refresh()` for the remaining TTL. |
+| **OAuth provider tokens** (access + refresh) | Stored plaintext on `oauth_accounts`. Compromise lets the attacker act as the user against Google/GitHub/etc. |
+| **Recovery code hashes** | Stored SHA-256 hashed. Each is single-use; consumption deletes the row. |
+| **In-flight magic-link tokens / reset tokens / verify-email tokens** | Stored hashed, 15-min to 24-hr TTL depending on type. Lets an attacker who intercepts the email take over the account. |
+
+## Trust boundaries
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      DB at rest                                  │
+│        (passwords hashed, tokens hashed, secrets plain)          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                       TRUST BOUNDARY
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│                       AuthCore server code                       │
+│         (Node runtime, has access to AUTH_SECRET)                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                  TLS  ──── TRUST BOUNDARY ────  TLS
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│                       Browser / client                           │
+│       (holds JWT in httpOnly cookie or localStorage)             │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                       TRUST BOUNDARY
+                              │
+                    The user's eyeballs + device
+```
+
+AuthCore is the perimeter between the DB and the wire. The DB is assumed semi-trusted (we hash secrets that go in, but we read non-secrets back as plain). The wire is assumed hostile — everything that leaves AuthCore goes through TLS, and tokens are short-lived + hashed-before-storage.
+
+## Threats and mitigations
+
+Indexed roughly by attack vector. File paths point at the implementation if you want to verify.
+
+### Password attacks
+
+| Threat | Mitigation |
+|---|---|
+| **Offline brute force on DB dump** | `bcryptjs` with ≥12 rounds (silently clamped — `packages/core/src/utils/password.ts`). Each guess costs ~250ms on modern hardware. |
+| **Online brute force / credential stuffing** | Not directly mitigated. App is responsible. Hook: `callbacks.onFailedLogin` fires on every failure so apps can rate-limit by IP+email. |
+| **Timing-based username enumeration via login** | bcryptjs runtime dominates — login response time is constant regardless of whether the email exists. |
+| **Plain-text passwords in logs** | Never logged. `Zod` validation strips passwords from error messages. Bcrypt hashing happens before any error surface. |
+
+### Token attacks
+
+| Threat | Mitigation |
+|---|---|
+| **Token leak in DB dump** | All tokens (email-verify, password-reset, refresh, magic-link, recovery codes) stored as SHA-256 hashes (`packages/core/src/utils/token.ts:hashToken`). Raw value never persists. |
+| **Token replay (single-use enforcement)** | Reset / verify / magic-link / recovery-code tokens are deleted from the DB before the success response. A second request returns `INVALID_TOKEN` (`features/passwordReset.ts`, `features/magicLink.ts`, `features/twoFactor.ts`). |
+| **Refresh token theft** | Rotation: every successful `/refresh` deletes the old token row and issues a new one. Stolen refresh tokens become useless on the next legitimate refresh. `auth.revokeAll(userId)` is the global kill switch. |
+| **Timing-based token guessing** | All token comparisons use `crypto.timingSafeEqual` via `safeCompareTokens` (CSRF) or SHA-256 + DB index lookup (everything else). |
+| **Short-token brute force** | Opaque tokens are 32 random bytes / 256 bits of entropy (`generateOpaqueToken`). Infeasible to brute force. |
+
+### JWT attacks
+
+| Threat | Mitigation |
+|---|---|
+| **`alg: none` / algorithm confusion** | `verifyJwt` (`packages/core/src/utils/token.ts:95`) hardcodes `algorithms: ['HS256']` in the verify call. Even if an attacker sends a token with `alg: none`, verify rejects it. |
+| **JWT expiry bypass** | `jsonwebtoken` library enforces `exp` claim. Tokens are minted with `expiresIn: '7d'` default (recommend `'15m'` paired with refresh tokens). |
+| **Algorithm downgrade via JWS-to-JWE confusion** | We only sign with HS256; no JWE in the library. There's no key resolution that an attacker could redirect. |
+| **2FA challenge token reused as session token (or vice versa)** | Challenge tokens carry `scope: '2fa-pending'` (`utils/token.ts:signTwoFactorChallenge`). `verifyTwoFactorChallenge` rejects tokens with any other scope. Session JWT verification rejects challenge-scoped tokens implicitly because no AuthCore code reads `scope` on session JWTs. |
+| **Compromised AUTH_SECRET** | All JWTs are minted with one secret. Rotation invalidates every live session — by design. There's no key-id rotation built in; the assumption is that a `session.secret` rotation is paired with a session purge. |
+
+### OAuth attacks
+
+| Threat | Mitigation |
+|---|---|
+| **State forgery / CSRF on callback** | State is an HMAC-SHA256-signed envelope (`packages/core/src/features/oauth.ts:signEnvelope`) carrying nonce, provider id, PKCE verifier, redirect URI, and issued-at timestamp. Verified with `timingSafeEqual`. Tampered state → 401 `INVALID_TOKEN`. |
+| **State replay** | 10-minute TTL on the `issuedAt` claim. Beyond the window → 401. |
+| **Authorization code interception (mobile / public clients)** | PKCE (S256) is always sent — `code_challenge` on the authorize URL, `code_verifier` on the token exchange. Even providers without strict PKCE enforcement get the same level of protection. |
+| **Account takeover via unverified email** | Auto-link policy refuses to link an OAuth account to an existing local user when the provider reports `email_verified: false`. Throws `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409). Blocks the "attacker registers unverified Gmail with victim's address, then signs in via Google" attack. |
+| **Apple client-secret JWT compromise** | Client secret is a per-request JWT signed with the `.p8` private key, valid for 10 minutes. If a generated JWT leaks, blast radius is one exchange. Long-term compromise requires the `.p8` file itself. |
+
+### CSRF (cookie mode)
+
+| Threat | Mitigation |
+|---|---|
+| **Cross-site state-changing requests** | Synchronizer-token pattern, opt-in via `session.csrf: true`. Non-httpOnly `${cookieName}_csrf` cookie + `X-CSRF-Token` header. `safeCompareTokens` for verification. Off by default for backward compatibility, but recommended in cookie mode. |
+| **CSRF cookie reset bypass** | First request (before cookie exists) is exempt — necessary because the user needs to log in to GET the cookie. This is the standard synchronizer-token design. State-changing requests with no CSRF cookie at all are accepted; state-changing requests with a CSRF cookie but wrong header are rejected. |
+| **SameSite-only bypass** | Cookies are `SameSite=Lax`. Modern browsers block cross-site POST navigations. CSRF guard is defense-in-depth above SameSite. |
+
+### Magic-link attacks
+
+| Threat | Mitigation |
+|---|---|
+| **Email account takeover → magic-link account takeover** | This is by design — magic-link trusts the email channel. If a user's email is compromised, their AuthCore account is compromised. Not a library-level mitigation. The user must protect their email account. |
+| **Token replay** | Single-use: token row deleted before the consume response. Second click returns 400 `INVALID_TOKEN`. |
+| **Brute-force consume** | Tokens are 256-bit opaque values, 15-minute TTL. Brute force is infeasible. |
+| **Enumeration via send** | `POST /magic-link` always returns 200 regardless of whether the email exists. Auto-create creates a row anyway (with sentinel password hash), so even response timing doesn't leak existence. |
+
+### 2FA attacks
+
+| Threat | Mitigation |
+|---|---|
+| **TOTP brute force** | 6-digit code = 1,000,000 possibilities. App is responsible for rate-limiting `verifyTwoFactor` (hook: `onFailedLogin` analog — TODO: dedicated callback). Without rate limiting an attacker can guess in ~10 minutes worst-case. |
+| **TOTP replay** | RFC 6238 design: codes are time-bound to a 30s step ±1. Replaying within ~90s window works (this is acceptable — same as every other TOTP implementation). Apps that need replay protection must track used codes themselves. |
+| **TOTP secret compromise via DB dump** | Plaintext at rest — see [Known tradeoffs](#known-tradeoffs). |
+| **Recovery code brute force** | Codes are `xxxx-xxxx-xxxx` from 31-character alphabet, ~63 bits of entropy. Infeasible to brute force. SHA-256 hashed at rest. Single-use. |
+| **Recovery code cross-user use** | `useRecoveryCode` verifies the token's `userId` matches the challenge JWT's `sub` (`features/twoFactor.ts`). Stolen recovery code can't authenticate as a different user. |
+| **2FA bypass via session-token reuse as challenge** | Scope check on the challenge JWT — see JWT attacks above. |
+| **2FA bypass via disable without re-auth** | `auth.disableTwoFactor` requires the user's current password. A stolen session cookie can't silently turn 2FA off. |
+| **Phishing of TOTP codes** | Not mitigated. Same limitation as every TOTP implementation. WebAuthn / passkeys would mitigate this — not yet shipped. |
+
+### Email and identity
+
+| Threat | Mitigation |
+|---|---|
+| **Email enumeration via `/forgot-password`** | Always returns 200, regardless of whether the email exists. Email-send errors are caught and swallowed. |
+| **Email enumeration via `/register`** | Returns 409 on duplicate email. This is a deliberate UX choice — the alternative (200 with "check your email") confuses users who genuinely forgot they have an account. Apps that prefer enumeration-safe signup can catch the 409 client-side and show a generic message. |
+| **Secret leak in email body (CVE-class)** | Reset / verify / invite / magic-link URLs are built from `baseUrl + paths.*` supplied by the framework adapter. `auth.forgotPassword` throws `MISSING_URL` (500) if a direct caller forgets to supply one. Was the cause of CVE-2026-AUTHCORE-001 in 0.5.0–0.8.x; fixed in 0.9.0. **Apps that ran 0.5–0.8 with passwordReset enabled must rotate AUTH_SECRET.** |
+| **Email verification bypass via cross-link** | Verify-email tokens are not magic-link tokens — they have `type: 'EMAIL_VERIFICATION'` and `findToken` filters by type. A token of one type cannot be redeemed as another. |
+| **Invitation as account takeover** | Invitations create the user; `acceptInvitation` sets the password. The invite link is the only way to claim that account. Treated as a 48-hour single-use token. |
+
+## Out of scope
+
+AuthCore does NOT defend against, and the host app is responsible for:
+
+1. **DoS and rate limiting.** Wire your own via `callbacks.onFailedLogin`. The Anthropic recommendation: rate-limit at the load balancer or in middleware before requests reach AuthCore.
+2. **Account lockout after N failed attempts.** Same as above.
+3. **Impossible-travel detection.** Check IP / geolocation in `callbacks.onSignIn`.
+4. **Device fingerprinting / session anomaly detection.**
+5. **IP allowlists / blocklists.**
+6. **Network-level attacks (MITM, DNS hijack, BGP).** Use TLS. The cookies default to `Secure` in production.
+7. **Compromised user device (malware, browser extensions, infostealers).** Nothing in the library can defend against an attacker who fully controls the user's browser session.
+8. **Compromised hosting / runtime.** If the attacker has code execution on your server, `AUTH_SECRET` is in `process.env` and they can do anything. Use secrets managers + ephemeral compute where this matters.
+9. **Database-at-rest encryption.** Use the disk-level or column-level features of your DB (Postgres TDE, AWS RDS encryption, etc.).
+10. **SAML / SCIM / SSO provisioning.** Out of scope for AuthCore. Build on top of OAuth or wait for a community plugin.
+11. **Compliance certifications (SOC 2, PCI, HIPAA, etc.).** AuthCore is a library, not a service — certifications attach to deployments, not code.
+12. **WebAuthn / passkeys.** Roadmap item, not yet shipped.
+13. **SMS-based 2FA.** Intentionally NOT shipped. SMS 2FA is known weak (SIM swap, SS7) and the industry has moved away from it.
+14. **Audit logging.** Use the lifecycle callbacks (`onSignIn`, `onSignOut`, `onFailedLogin`, `onTokenRefresh`, `onPasswordReset`) to feed your own audit pipeline.
+
+## Cryptographic primitives
+
+Inventory for compliance reviews and security auditors.
+
+| Use | Primitive | Parameters | Source |
+|---|---|---|---|
+| Password hashing | bcryptjs | ≥12 rounds (silently clamped) | `bcryptjs` npm package, `packages/core/src/utils/password.ts` |
+| Opaque token generation | `crypto.randomBytes` | 32 bytes / 256 bits | Node.js stdlib, `packages/core/src/utils/token.ts:generateOpaqueToken` |
+| Token hash for storage | SHA-256 | hex digest, 64 chars | Node.js stdlib, `packages/core/src/utils/token.ts:hashToken` |
+| Token equality compare | `crypto.timingSafeEqual` | constant-time | Node.js stdlib, `packages/core/src/utils/token.ts:safeCompareTokens` |
+| Session JWT | HS256 | secret from `session.secret`, default 7d TTL | `jsonwebtoken` npm package, `packages/core/src/utils/token.ts:signJwt` |
+| 2FA challenge JWT | HS256 | scope=`2fa-pending`, default 5min TTL | `packages/core/src/utils/token.ts:signTwoFactorChallenge` |
+| OAuth state envelope | HMAC-SHA256 | signed with `session.secret`, 10min TTL | `packages/core/src/features/oauth.ts:signEnvelope` |
+| OAuth PKCE challenge | SHA-256 | S256 method (RFC 7636) | `packages/core/src/utils/token.ts:pkceChallenge` |
+| Apple client secret JWT | ES256 | signed with developer's .p8 key, default 10min TTL | `packages/core/src/oauth/apple.ts:generateAppleClientSecret` |
+| TOTP code | HOTP/HMAC-SHA1 (RFC 6238) | 30s period, 6 digits, ±1 step drift | `packages/core/src/utils/totp.ts` |
+| TOTP secret | `crypto.randomBytes` | 20 bytes / 160 bits, base32 encoded | `packages/core/src/utils/totp.ts:generateTotpSecret` |
+| Recovery code | `crypto.randomBytes` (per char) | 31-char alphabet, 12 chars + 2 dashes, ~63 bits | `packages/core/src/utils/totp.ts:generateRecoveryCodes` |
+| CSRF synchronizer token | `crypto.randomBytes` | 32 bytes / 256 bits, hex | `packages/core/src/utils/token.ts:generateCsrfToken` |
+
+**SHA-1 in TOTP** is RFC-mandated and what every authenticator app expects. The HMAC construction makes this safe even with SHA-1's collision weakness — preimage resistance is what matters here, and SHA-1's preimage resistance is unbroken.
+
+## Known tradeoffs
+
+Decisions that are debatable. Calling them out so reviewers don't waste time re-litigating in private.
+
+### TOTP secret stored plaintext
+
+The user's TOTP secret is stored unencrypted in `users.two_factor_secret`. Column-level encryption was considered and rejected because:
+
+1. Decryption key has to live somewhere your server can read at request time, so it'd be at the same trust level as `session.secret`. Compromise of one means compromise of the other.
+2. Password hashes are bcrypt-hashed precisely because they're high-value and can be brute-forced offline. TOTP secrets aren't brute-forceable offline in a meaningful sense — they're 160-bit secrets used only to generate codes.
+3. The threat (DB compromise) is better handled at the DB layer (encrypted volumes, encrypted backups) than the application layer.
+
+If your threat model demands it, encrypt the column with your KMS via Drizzle's `customType` and a getter/setter. The adapter contract doesn't constrain how `twoFactorSecret` is stored.
+
+### Magic-link auto-creates users
+
+`POST /magic-link` for an unknown email creates a new user (with `emailVerified: true`, since the email was just confirmed by the link's arrival). This means:
+
+- Anyone with an email account can create AuthCore accounts on your service.
+- This is the same property as `POST /register` — both flows let arbitrary emails become users.
+- Apps that need invite-only access should disable `magicLink` in `features` and gate `/register` themselves (or use `authcore.invite` exclusively).
+
+### OAuth-only users can't login with password
+
+If a user signs up via OAuth, their `passwordHash` is set to a sentinel (`!OAUTH_NO_PASSWORD`) that can never match a real password. They can claim a password via the standard forgot-password flow — `resetPassword` doesn't care what the prior hash was. This is documented behavior, not a bug.
+
+### Login email enumeration via 409 on register
+
+Discussed in the threats table. Tradeoff between UX (clear error: "you already have an account") and enumeration safety. We chose UX. Apps that prefer enumeration safety can swallow the 409 client-side.
+
+### `session.secret` rotation has no key-id
+
+JWTs aren't tagged with a key ID. Rotating `AUTH_SECRET` invalidates every live session, which is by design — recoverable from compromise, but disruptive. If you need overlapping-key rotation (sign with new, verify either), add a thin wrapper around `verifyToken` that tries both secrets.
+
+## Verification recipes
+
+For a security reviewer reproducing the claims above:
+
+```bash
+# Inspect every token-comparison call site
+grep -rn "timingSafeEqual\|safeCompareTokens" packages/
+
+# Inspect every place a token is created / stored
+grep -rn "hashToken\|generateOpaqueToken" packages/
+
+# Verify HS256-only on JWT verification
+grep -rn "algorithms:" packages/core/src/utils/token.ts
+
+# Verify forgot-password / reset / verify / magic-link all delete-before-return
+grep -B2 -A5 "deleteToken" packages/core/src/features/
+
+# Run the integration suite against a real Postgres
+docker compose up -d
+pnpm --filter @authcore/prisma-adapter db:push
+pnpm -w run test
+```
+
+## Reporting issues
+
+If you find anything that contradicts this document — a missing mitigation, an incorrect claim, an unstated assumption — please report it. See [`SECURITY.md`](https://github.com/david-ouatedem/auth-core/blob/main/SECURITY.md) for the disclosure process.
+
+We treat this document as code: a security regression IS a discrepancy with what's written here.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/refresh-tokens -->
+
+# Refresh Tokens
+
+AuthCore 0.10 introduces refresh tokens with rotation and server-side revocation. Use them to keep JWTs short-lived (15m) while still giving users long sessions (30d default), and to gain the ability to revoke a compromised session before the JWT expires.
+
+## How it works
+
+- **Login / register / accept-invitation** return `{ user, token, refreshToken }`. The JWT is the short-lived access token; the refresh token is a long-lived opaque secret.
+- The refresh token is stored in the DB as a SHA-256 hash (same pattern as the other AuthCore tokens). The raw value is shown to the user once and never again.
+- **`POST /auth/refresh`** validates the refresh token, deletes the row, and issues a fresh JWT + a new refresh token. This is "rotation" — using a refresh token invalidates it. Stolen refresh tokens become useless the next time the legitimate user refreshes.
+- **`POST /auth/revoke`** deletes a single refresh token (idempotent).
+- **`auth.revokeAll(userId)`** deletes every refresh token for a user — "log out everywhere". Useful after a password change or a security incident.
+
+## Recommended defaults
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    expiresIn: '15m',          // short-lived JWT
+    refreshExpiresIn: '30d',   // long-lived refresh (default)
+  },
+})
+```
+
+The client SDKs (`@authcore/core-web`, `@authcore/react`) automatically call `/refresh` when a request returns 401, retry, and surface failure as `isAuthenticated: false`. No app code needed.
+
+## API surface
+
+### Server (`@authcore/core`)
+
+```ts
+auth.refresh(rawRefreshToken)   // → { user, token, refreshToken }; throws 401 on invalid
+auth.revoke(rawRefreshToken)    // idempotent
+auth.revokeAll(userId)          // log out everywhere
+```
+
+### HTTP routes (added to all three framework adapters)
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| POST | `/auth/refresh` | `{ refreshToken }` (or cookie) | Returns `{ user, token, refreshToken }`; sets cookies if `useCookies` |
+| POST | `/auth/revoke` | `{ refreshToken }` (or cookie) | Revoke a single token; idempotent |
+
+### Client (`@authcore/react`)
+
+```tsx
+const { refresh, revokeSession } = useAuth()
+await refresh()         // explicit refresh (the client also auto-refreshes on 401)
+await revokeSession()   // server-side revoke + clear local state
+```
+
+## Cookie mode vs api mode
+
+- **api mode** (Bearer): the refresh token lives in `localStorage` under `${storageKey}_refresh` when `persistSession: true`.
+- **cookie mode**: the refresh token is set as an httpOnly cookie `${cookieName}_refresh` and the browser carries it automatically. The server reads it from `req.cookies`.
+
+## When to revoke all sessions
+
+- After a successful password reset (`callbacks.onPasswordReset` is a good place to call `auth.revokeAll(user.id)`).
+- After an admin-flagged compromise.
+- When a user actively requests "log me out everywhere" from your UI.
+
+## Token cleanup
+
+Expired refresh tokens are kept until `db.deleteExpiredTokens()` is called. Schedule it as a cron / background job. The Prisma adapter implementation is `deleteMany({ where: { expiresAt: { lt: new Date() } } })`.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/csrf -->
+
+# CSRF Protection
+
+AuthCore 0.10 ships an opt-in synchronizer-token CSRF protection for cookie mode. It's **off by default** for backward compatibility.
+
+## When you need it
+
+If you authenticate via httpOnly cookies (`useCookies: true`), a malicious site can trick your user's browser into sending authenticated state-changing requests to your API. `SameSite: 'lax'` (AuthCore's cookie default) blocks most cross-site POSTs but not all attack vectors. For defense in depth, enable CSRF tokens.
+
+In Bearer-token (`mode: 'api'`) mode, CSRF is not relevant — the malicious site can't read `localStorage` from your origin.
+
+## Enable it
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: {
+    strategy: 'jwt',
+    secret: process.env.AUTH_SECRET!,
+    csrf: true,   // ← enable CSRF
+  },
+})
+
+app.use('/auth', auth.router({ useCookies: true }))
+```
+
+## How it works (synchronizer-token pattern)
+
+1. On `register`, `login`, `refresh`, and `accept-invitation`, the server sets a third cookie: `${cookieName}_csrf`. **This cookie is NOT httpOnly** — client-side JS reads it.
+2. On every state-changing request (POST/PUT/PATCH/DELETE), the client must echo the cookie value back in the `X-CSRF-Token` header.
+3. Server middleware/guard verifies they match (timing-safe). Mismatch → 403 with `code: 'CSRF_INVALID'`.
+4. GET / HEAD / OPTIONS are exempt.
+5. First request before the cookie is set (e.g. the initial register/login) is also exempt — there's no cookie to compare against yet.
+
+## Client integration
+
+`@authcore/core-web` (and therefore `@authcore/react`) automatically reads `${cookieName}_csrf` from `document.cookie` on every state-changing fetch and adds the header. **No app code changes needed.**
+
+If you have your own HTTP client outside the SDK, add the header manually:
+
+```ts
+const csrfValue = document.cookie.match(/authcore_token_csrf=([^;]+)/)?.[1]
+await fetch('/api/something', {
+  method: 'POST',
+  credentials: 'include',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRF-Token': csrfValue ?? '',
+  },
+  body: JSON.stringify(...)
+})
+```
+
+## NestJS: wire the guard globally
+
+NestJS's idiom is per-controller / per-route guards. To protect every state-changing endpoint, bind `CsrfGuard` globally in `main.ts`:
+
+```ts
+import { NestFactory, Reflector } from '@nestjs/core'
+import cookieParser from 'cookie-parser'
+import { CsrfGuard } from '@authcore/nestjs'
+import { AppModule } from './app.module'
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule)
+  app.use(cookieParser())
+  app.useGlobalGuards(app.get(CsrfGuard))
+  await app.listen(3000)
+}
+bootstrap()
+```
+
+## Customizing the CSRF cookie name
+
+The CSRF cookie is always `${session.cookieName}_csrf`. To customize, change `session.cookieName`:
+
+```ts
+session: { strategy: 'jwt', secret: SECRET, cookieName: 'my_token', csrf: true }
+// → auth cookie:    my_token
+// → refresh cookie: my_token_refresh
+// → CSRF cookie:    my_token_csrf
+```
+
+Configure `@authcore/core-web` to read the matching name with the `csrfCookieName` option on `createFetchAuthClient`. The React SDK currently uses the default `'authcore_token_csrf'`; override by supplying a custom `httpClient` to `<AuthProvider>` if you've customized `cookieName`.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/oauth -->
+
+# OAuth (Sign in with Google)
+
+AuthCore 0.11 ships OAuth 2.0 + PKCE support. Google is the bundled provider; the `OAuthProvider` interface lets you (or the community) add others without changing core.
+
+## How it works
+
+The flow follows the [OAuth 2.0 Authorization Code + PKCE](https://datatracker.ietf.org/doc/html/rfc7636) spec.
+
+1. App redirects the user to `GET /auth/oauth/google`.
+2. AuthCore generates a PKCE code verifier, builds an HMAC-signed state envelope, and 302s the user to Google's authorization URL.
+3. User consents at Google, which 302s back to `GET /auth/oauth/google/callback?code=…&state=…`.
+4. AuthCore verifies the HMAC on `state`, checks it hasn't expired (10 min TTL), and confirms `redirectUri` matches what was sent originally.
+5. AuthCore exchanges the `code` (+ PKCE verifier) for tokens, fetches the user profile.
+6. **Auto-link policy:**
+   - Existing `OAuthAccount` row → load the linked user.
+   - No `OAuthAccount`, no local user with this email → create a new user (with a sentinel password hash that can never match a password).
+   - No `OAuthAccount`, local user with this email, **provider says email is verified** → link the OAuth account to the existing user.
+   - No `OAuthAccount`, local user with this email, **provider says email is NOT verified** → throw `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409). Sign in with password first.
+7. AuthCore mints a JWT + refresh token (same as `login`) and either sets cookies (cookie mode) or returns JSON (api mode).
+
+State is **stateless** — the HMAC envelope carries the nonce, provider id, PKCE verifier, redirect URI, and issued-at timestamp. There is no DB write at the start of the flow.
+
+## Server setup
+
+```ts
+import { createAuth, createGoogleProvider } from '@authcore/core'
+import { prismaAdapter } from '@authcore/prisma-adapter'
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  oauth: {
+    google: createGoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  },
+})
+```
+
+Routes are mounted automatically by every framework adapter:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/auth/oauth/:provider` | Redirects to provider authorization URL |
+| GET | `/auth/oauth/:provider/callback` | Provider redirects here; we mint a session |
+
+### Express
+
+```ts
+app.use('/auth', auth.router({
+  baseUrl: 'https://api.myapp.com',
+  useCookies: true,                          // recommended
+  oauthSuccessRedirect: 'https://myapp.com/',  // where to land after success
+}))
+```
+
+### Fastify
+
+```ts
+await app.register(auth.plugin({
+  baseUrl: 'https://api.myapp.com',
+  useCookies: true,
+  oauthSuccessRedirect: 'https://myapp.com/',
+}), { prefix: '/auth' })
+```
+
+### NestJS
+
+```ts
+@Module({
+  imports: [
+    AuthModule.register({
+      db: prismaAdapter(prisma),
+      session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+      oauth: { google: createGoogleProvider({ ... }) },
+      baseUrl: 'https://api.myapp.com',
+      useCookies: true,
+      oauthSuccessRedirect: 'https://myapp.com/',
+    }),
+  ],
+})
+```
+
+### Configuring the Google OAuth client
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+2. Create an OAuth 2.0 Client ID (type: Web application).
+3. **Authorized redirect URI** must be exactly `${baseUrl}/auth/oauth/google/callback`.
+4. Save Client ID + Client Secret to environment variables.
+
+## Client setup (`@authcore/react`)
+
+```tsx
+import { useAuth } from '@authcore/react'
+
+function SignInPage() {
+  const { signInWithProvider } = useAuth()
+  return (
+    <button onClick={() => signInWithProvider('google')}>
+      Sign in with Google
+    </button>
+  )
+}
+
+// On the page the server redirects to after a successful OAuth flow:
+function OAuthCallbackPage() {
+  const { handleOAuthCallback } = useAuth()
+  useEffect(() => {
+    handleOAuthCallback().catch(console.error)
+  }, [])
+  return <p>Signing you in…</p>
+}
+```
+
+In **cookie mode**, `handleOAuthCallback()` just calls `/me` — the browser already has the cookies.
+
+In **api mode**, set `oauthSuccessRedirect` on the server to a frontend URL. The server redirects with `#token=…&refreshToken=…` in the fragment, and `handleOAuthCallback()` reads it, persists the token, and clears the fragment.
+
+## Bundled providers
+
+### Google
+
+Already documented above. Requires `clientId` + `clientSecret` from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Authorized redirect URI: `${baseUrl}/auth/oauth/google/callback`.
+
+### Apple (Sign in with Apple)
+
+Apple's protocol is the most particular of the bundled set. The `client_secret` is not a static string — it's an ES256-signed JWT minted on each token exchange, signed with a `.p8` private key from Apple Developer. AuthCore generates the JWT for you.
+
+```ts
+import { createAppleProvider } from '@authcore/core'
+
+const apple = createAppleProvider({
+  clientId: 'com.example.myapp.service',         // Apple Services ID
+  teamId: 'ABC1234DEF',                          // Apple Team ID
+  keyId: 'XYZ9876ABC',                           // Key ID from the .p8 file
+  privateKey: process.env.APPLE_PRIVATE_KEY!,    // contents of the .p8 (PEM)
+})
+```
+
+**Configuration:**
+
+1. In [Apple Developer → Identifiers](https://developer.apple.com/account/resources/identifiers/list), create a **Services ID** (e.g. `com.example.myapp.service`). Configure **Sign in with Apple** on it with your domain + return URL `${baseUrl}/auth/oauth/apple/callback`.
+2. In Apple Developer → Keys, **create a new key** with Sign in with Apple enabled. Download the `.p8` file once (Apple won't show it again).
+3. Note the **Team ID** (top-right of the Developer portal) and the **Key ID** (shown after creating the key).
+4. Store the `.p8` contents in `APPLE_PRIVATE_KEY` — full PEM including `-----BEGIN PRIVATE KEY-----` / `-----END PRIVATE KEY-----`.
+
+**Notes:**
+- AuthCore uses `response_mode=query` so the existing AuthCore callback (GET) handles Apple's response — no body-parser changes needed.
+- Apple's `email_verified` may be returned as the string `"true"` or as a boolean — AuthCore normalizes both.
+- Apple users may sign in with [private relay emails](https://support.apple.com/en-us/HT210425) (`*@privaterelay.appleid.com`). These are real forwarding addresses; treat them like any other email.
+- The user's **name** is delivered only on the first sign-in, via a form field that AuthCore doesn't read in query mode. The sign-in still works — the AuthCore user is created with `name` unset and the user can edit later.
+- The client secret JWT has a 10-minute TTL by default (configurable via `clientSecretTtlSeconds`). A fresh JWT is minted on every exchange.
+
+### Discord
+
+```ts
+import { createDiscordProvider } from '@authcore/core'
+
+const discord = createDiscordProvider({
+  clientId: process.env.DISCORD_CLIENT_ID!,
+  clientSecret: process.env.DISCORD_CLIENT_SECRET!,
+  // scopes: ['identify', 'email'],  // optional; 'email' is required to read email
+})
+```
+
+**Configuration:** Create an app at <https://discord.com/developers/applications> → OAuth2. The **Redirect URI** must be exactly `${baseUrl}/auth/oauth/discord/callback`.
+
+**Notes:**
+- Discord exposes a `verified` flag on the user object; AuthCore threads it through to `emailVerified`. Unverified Discord accounts hit the standard `EMAIL_NOT_VERIFIED_BY_PROVIDER` (409) gate when an existing local user has that email.
+- Avatar URLs are built from `id` + `avatar` hash (`https://cdn.discordapp.com/avatars/<id>/<hash>.png`).
+- Discord's display name comes from `global_name` (the new unified name), falling back to `username` for legacy accounts.
+
+### Microsoft (Entra ID)
+
+```ts
+import { createMicrosoftProvider } from '@authcore/core'
+
+const microsoft = createMicrosoftProvider({
+  clientId: process.env.MICROSOFT_CLIENT_ID!,
+  clientSecret: process.env.MICROSOFT_CLIENT_SECRET!,
+  // tenant: 'common',  // 'common' | 'organizations' | 'consumers' | <tenant-id>
+  // scopes: ['openid', 'profile', 'email', 'offline_access'],  // add offline_access for refresh tokens
+})
+```
+
+**Configuration:** Register an app at the [Azure Portal → App registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade). The **Redirect URI** must be exactly `${baseUrl}/auth/oauth/microsoft/callback` (type: Web).
+
+**Tenant strategies:**
+- `'common'` — personal Microsoft accounts AND work/school accounts in any Entra tenant. Best default.
+- `'organizations'` — work/school accounts only (B2B).
+- `'consumers'` — personal accounts only.
+- `'<your-tenant-id>'` — single-tenant: restrict to one specific Entra tenant.
+
+**Notes:**
+- AuthCore reads identity claims (sub/email/name) from the OpenID Connect `id_token` returned in the token exchange — no extra Microsoft Graph call when the id_token is present.
+- Microsoft doesn't expose an `email_verified` claim, so emails are treated as verified (Microsoft verifies before issuing accounts).
+- Falls back to Microsoft Graph `/me` if the id_token is missing the email claim.
+
+### GitHub
+
+```ts
+import { createGithubProvider } from '@authcore/core'
+
+const github = createGithubProvider({
+  clientId: process.env.GITHUB_CLIENT_ID!,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+  // scopes: ['read:user', 'user:email'],   // optional override
+  // enterpriseBaseUrl: 'https://ghe.acme.com',  // optional GHE
+})
+```
+
+**Configuration:** Register an OAuth App at <https://github.com/settings/developers>. The **Authorization callback URL** must be exactly `${baseUrl}/auth/oauth/github/callback`.
+
+**Notes:**
+- AuthCore fetches `/user/emails` and returns the user's **verified primary** email. If the account has no verified email, login is refused with a clear error.
+- The default scopes (`read:user`, `user:email`) are the minimum needed. Add `repo` etc. if your app needs additional permissions.
+- For GitHub Enterprise Server, pass `enterpriseBaseUrl` and AuthCore points all endpoints at your instance.
+
+## Adding a new provider
+
+Implement the `OAuthProvider` interface:
+
+```ts
+import type { OAuthProvider } from '@authcore/types'
+
+export function createGithubProvider(config: {
+  clientId: string
+  clientSecret: string
+}): OAuthProvider {
+  return {
+    id: 'github',
+    scopes: ['read:user', 'user:email'],
+    authorize: ({ state, codeChallenge, redirectUri }) => {
+      const u = new URL('https://github.com/login/oauth/authorize')
+      u.searchParams.set('client_id', config.clientId)
+      u.searchParams.set('redirect_uri', redirectUri)
+      u.searchParams.set('state', state)
+      u.searchParams.set('code_challenge', codeChallenge)
+      u.searchParams.set('code_challenge_method', 'S256')
+      u.searchParams.set('scope', 'read:user user:email')
+      return u.toString()
+    },
+    exchangeCode: async ({ code, codeVerifier, redirectUri }) => {
+      // POST to github.com/login/oauth/access_token with the code + verifier
+      // …
+    },
+    getUserInfo: async (accessToken) => {
+      // GET https://api.github.com/user + /user/emails
+      // …
+      return { id: '…', email: '…', emailVerified: true }
+    },
+  }
+}
+```
+
+Then register it alongside Google: `oauth: { google, github }`. The framework routes pick the provider by URL slug automatically.
+
+## Security notes
+
+- **PKCE is required** — the AuthCore core always sends `code_challenge` + `code_challenge_method=S256`. Providers without PKCE support won't be compatible.
+- **State envelope is HMAC-signed with `session.secret`.** A leaked secret invalidates all in-flight OAuth flows.
+- **No state TTL means no replay window.** The current TTL is 10 minutes — enough for slow consent screens, short enough to prevent intercepted callbacks from being reused.
+- **Email verification by the provider is mandatory for auto-linking.** If a provider says `emailVerified: false`, AuthCore refuses to link the OAuth account to an existing local user. This blocks an attacker from registering an unverified Gmail with someone else's email and hijacking the account.
+- **No password is set for OAuth-only users.** They have a sentinel `passwordHash` (`!OAUTH_NO_PASSWORD`) that can never match a real password. They can claim a password via the standard forgot-password flow.
+
+## Error codes
+
+| Code | HTTP | Cause |
+|------|------|-------|
+| `OAUTH_PROVIDER_UNKNOWN` | 400 | Provider id not registered in `config.oauth` |
+| `INVALID_TOKEN` | 401 | State HMAC invalid, expired, or `redirectUri` mismatch |
+| `OAUTH_EXCHANGE_FAILED` | 502 | Provider's token endpoint returned non-2xx |
+| `OAUTH_USERINFO_FAILED` | 502 | Provider's userinfo endpoint returned non-2xx |
+| `EMAIL_NOT_VERIFIED_BY_PROVIDER` | 409 | A local user exists with that email but the provider hasn't verified ownership |
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/magic-link -->
+
+# Magic-Link Login
+
+AuthCore 0.12 adds passwordless email sign-in. Users enter their email, receive a one-time link, click it, and land authenticated. No password required.
+
+## When to use it
+
+- Apps where passwords are friction (consumer products, internal tools, low-stakes SaaS).
+- Apps that pair magic-link with email/password (Slack, Notion, Linear pattern — users choose either path).
+- OAuth-only apps that want a fallback for users who don't have a supported provider account.
+
+## How it works
+
+1. User submits email to `POST /auth/magic-link`. The server **always returns 200** whether the email exists or not — enumeration-safe.
+2. The server upserts a user record (with a sentinel `passwordHash`) and emails a one-time link `${magicLinkUrl}?token=…`. Token TTL: 15 minutes.
+3. User clicks the link, lands on `GET /auth/magic-link/consume?token=…`. Server verifies the token (hashed SHA-256 lookup), deletes the row (single-use), mints a JWT + refresh token.
+4. Cookie mode → server sets the standard 3 cookies and redirects to `magicLinkSuccessRedirect`. API mode → returns `{ user, token, refreshToken }` JSON (or redirects with `#token=…&refreshToken=…` if `magicLinkSuccessRedirect` is set).
+
+The token is the same opaque-32-bytes-then-SHA256-hashed structure used for password reset and email verification. Same security properties: timing-safe lookup, hashed at rest, single-use.
+
+## Enable the feature
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  features: ['magicLink'],
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'auth@yourdomain.com',
+  },
+})
+```
+
+Then mount your framework adapter with optional redirects:
+
+```ts
+// Express
+app.use('/auth', auth.router({
+  baseUrl: 'https://api.myapp.com',
+  useCookies: true,
+  magicLinkSuccessRedirect: 'https://myapp.com/',
+}))
+
+// Fastify
+await app.register(auth.plugin({
+  baseUrl: 'https://api.myapp.com',
+  useCookies: true,
+  magicLinkSuccessRedirect: 'https://myapp.com/',
+}), { prefix: '/auth' })
+
+// NestJS
+AuthModule.register({
+  // ...
+  baseUrl: 'https://api.myapp.com',
+  useCookies: true,
+  magicLinkSuccessRedirect: 'https://myapp.com/',
+})
+```
+
+## Routes added
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/auth/magic-link` | Send a magic-link email. Body: `{ email }`. Always 200. |
+| GET | `/auth/magic-link/consume` | Consume a token. Query: `?token=…`. Mints session. |
+
+## Client integration
+
+```tsx
+import { useAuth } from '@authcore/react'
+
+function SignInForm() {
+  const { signInWithMagicLink } = useAuth()
+  const [sent, setSent] = useState(false)
+  const onSubmit = async (e) => {
+    e.preventDefault()
+    await signInWithMagicLink(e.target.email.value)
+    setSent(true)
+  }
+  if (sent) return <p>Check your email for a sign-in link.</p>
+  return (
+    <form onSubmit={onSubmit}>
+      <input name="email" type="email" required />
+      <button>Send sign-in link</button>
+    </form>
+  )
+}
+
+// On the page you set as magicLinkSuccessRedirect (or any callback page)
+function MagicLinkLanding() {
+  const { handleMagicLinkCallback } = useAuth()
+  useEffect(() => {
+    handleMagicLinkCallback().catch(console.error)
+  }, [])
+  return <p>Signing you in…</p>
+}
+```
+
+`handleMagicLinkCallback()` is smart about three cases:
+
+- **Direct email-link click** — URL has `?token=…`. The client calls `/auth/magic-link/consume` itself, populates state, and strips `?token=` from history.
+- **API mode + server-side redirect** — URL has `#token=…&refreshToken=…` in the fragment. The client reads tokens from the fragment, populates state, clears the fragment.
+- **Cookie mode + server-side redirect** — cookies are already set. The client fetches `/me` to populate the user.
+
+## Customizing the email
+
+```ts
+createAuth({
+  ...,
+  email: {
+    provider: resendAdapter(...),
+    from: 'auth@app.com',
+    templates: {
+      magicLink: ({ email, link, ttlMinutes }) => ({
+        subject: `Sign in to MyApp`,
+        html: `
+          <h1>Welcome back</h1>
+          <p>Click <a href="${link}">here</a> to sign in. Expires in ${ttlMinutes} minutes.</p>
+        `,
+        text: `Sign in: ${link}`,
+      }),
+    },
+  },
+})
+```
+
+## Auto-create vs. login-only
+
+By default magic-link **creates a new user** if no user exists for the email. Clicking the link verifies the email by definition (the link arrived in their inbox), so the new user is created with `emailVerified: true` and the standard sentinel password hash `!MAGIC_LINK_NO_PASSWORD`.
+
+To make magic-link login-only (refuse unknown emails silently), pass `autoCreate: false` if you're calling `sendMagicLink` directly from `@authcore/core`. Today the framework adapters always use the default; we'll surface this as a config option if there's demand.
+
+## Security notes
+
+- **Tokens are single-use.** Consuming a token deletes the row before returning the session. A second click on the same link returns 400 `INVALID_TOKEN` — by design.
+- **15-minute TTL** balances usability (slow email delivery) and revocability (limited replay window if email is forwarded).
+- **No password set on auto-created users.** They have the sentinel `!MAGIC_LINK_NO_PASSWORD` hash that no password can match. They can claim a real password via the standard forgot-password flow.
+- **Always returns 200 from `/magic-link`** — never reveals whether the email exists. Same enumeration property as forgot-password.
+
+## Error codes
+
+| Code | HTTP | Cause |
+|------|------|-------|
+| `FEATURE_DISABLED` | 500 | `features: ['magicLink']` not enabled on the auth config |
+| `EMAIL_NOT_CONFIGURED` | 500 | No `email.provider` set on the auth config |
+| `MISSING_URL` | 500 | Framework adapter didn't supply `magicLinkUrl` (shouldn't happen with built-in adapters) |
+| `INVALID_TOKEN` | 400 | Token is unknown, expired, or already consumed |
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/two-factor -->
+
+# Two-Factor Authentication (TOTP)
+
+AuthCore 0.12 ships built-in TOTP-based 2FA. Users enroll once with an authenticator app (Google Authenticator, 1Password, Authy, Bitwarden — anything that scans an `otpauth://` URL), and from then on their sign-in flow has two steps:
+
+1. Email + password → AuthCore returns a short-lived **challenge token**.
+2. Challenge token + 6-digit code → AuthCore returns a full session.
+
+Plus 10 one-time **recovery codes** issued at enrollment, so a lost device doesn't lock the user out.
+
+## What's implemented
+
+- **RFC 6238 TOTP** (SHA-1, 6 digits, 30-second period). Built from the RFC spec — zero dependencies. Verified against the RFC 6238 Appendix B test vectors.
+- **±1 step drift tolerance** (90-second acceptance window), per RFC 6238 §5.2.
+- **Recovery codes**: 10 codes per user, `xxxx-xxxx-xxxx` format, SHA-256 hashed at rest, single-use.
+- **Disable requires password re-entry** so a stolen session cookie can't silently turn 2FA off.
+- **Challenge tokens are scoped JWTs**: they carry `scope: '2fa-pending'` and cannot be reused as session tokens (and vice versa).
+- Available on every framework adapter (Express, Fastify, NestJS, Next.js) and the React SDK.
+
+## Enable the feature
+
+2FA is always available on the auth core — there's no `features` flag to set. Users opt in individually by calling `setupTwoFactor`. Set `appName` on your config so authenticator apps show your brand:
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  appName: 'MyApp', // shown in the user's authenticator app
+})
+```
+
+Make sure to `db:push` (or generate a migration) — Prisma schema now has `twoFactorEnabled` + `twoFactorSecret` columns on `User`, and `RECOVERY_CODE` in the `TokenType` enum.
+
+## HTTP routes
+
+| Method | Path | Auth | Body | Description |
+|--------|------|------|------|-------------|
+| POST | `/auth/2fa/setup` | required | none | Begin enrollment. Returns `{ secret, otpauthUrl, recoveryCodes }`. |
+| POST | `/auth/2fa/enable` | required | `{ code }` | Confirm enrollment with the first TOTP code. |
+| POST | `/auth/2fa/disable` | required | `{ password }` | Disable 2FA. Password re-entry required. |
+| POST | `/auth/2fa/verify` | none | `{ challengeToken, code }` | Complete a 2FA-pending sign-in with a TOTP code. |
+| POST | `/auth/2fa/recovery` | none | `{ challengeToken, code }` | Complete a 2FA-pending sign-in with a recovery code. |
+
+## The login flow changes
+
+`POST /auth/login` now returns one of two shapes:
+
+**Without 2FA** (existing behavior):
+```json
+{ "user": { ... }, "token": "...", "refreshToken": "..." }
+```
+
+**With 2FA enabled** for that user:
+```json
+{ "requires2FA": true, "challengeToken": "eyJhbGc..." }
+```
+
+The challenge token is a JWT with `scope: '2fa-pending'` and a 5-minute TTL. The client checks for `requires2FA` and either prompts for a TOTP code → `/auth/2fa/verify`, or offers the recovery-code flow → `/auth/2fa/recovery`.
+
+## Client integration (React)
+
+```tsx
+'use client'
+import { useState } from 'react'
+import { useAuth } from '@authcore/react'
+
+export function LoginForm() {
+  const { signIn, verifyTwoFactor } = useAuth()
+  const [pending, setPending] = useState<{ challengeToken: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function onSubmit(formData: FormData) {
+    const result = await signIn(
+      String(formData.get('email')),
+      String(formData.get('password')),
+    )
+    if ('requires2FA' in result) {
+      setPending({ challengeToken: result.challengeToken })
+    }
+    // Otherwise we're signed in — the AuthProvider state updated automatically.
+  }
+
+  if (pending) {
+    return (
+      <form action={async (fd) => {
+        try {
+          await verifyTwoFactor(pending.challengeToken, String(fd.get('code')))
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Invalid code')
+        }
+      }}>
+        <input name="code" autoComplete="one-time-code" required />
+        <button>Verify</button>
+        {error && <p>{error}</p>}
+      </form>
+    )
+  }
+
+  return (
+    <form action={onSubmit}>
+      <input name="email" type="email" required />
+      <input name="password" type="password" required />
+      <button>Sign in</button>
+    </form>
+  )
+}
+```
+
+## Enrollment (React)
+
+```tsx
+'use client'
+import { useState } from 'react'
+import { useAuth } from '@authcore/react'
+import { QRCodeSVG } from 'qrcode.react'
+
+export function TwoFactorSetup() {
+  const { setupTwoFactor, enableTwoFactor } = useAuth()
+  const [setup, setSetup] = useState<{ otpauthUrl: string; recoveryCodes: string[] } | null>(null)
+
+  async function begin() {
+    setSetup(await setupTwoFactor())
+  }
+
+  async function confirm(formData: FormData) {
+    await enableTwoFactor(String(formData.get('code')))
+    alert('2FA enabled')
+  }
+
+  if (!setup) return <button onClick={begin}>Set up 2FA</button>
+
+  return (
+    <div>
+      <p>Scan this QR with your authenticator app:</p>
+      <QRCodeSVG value={setup.otpauthUrl} />
+      <p>Save these recovery codes — they're shown once:</p>
+      <pre>{setup.recoveryCodes.join('\n')}</pre>
+      <form action={confirm}>
+        <input name="code" placeholder="6-digit code" />
+        <button>Confirm</button>
+      </form>
+    </div>
+  )
+}
+```
+
+The `qrcode.react` import is one example of a QR renderer; any library that takes a URL works. You can also paste the `secret` value directly into the authenticator app if QR scanning isn't available.
+
+## Recovery code use
+
+```tsx
+async function onUseRecoveryCode(code: string) {
+  await useRecoveryCode(pending.challengeToken, code)
+  alert('Signed in — consider generating new recovery codes since you used one.')
+}
+```
+
+Recovery codes are single-use. After consumption the matching token row is deleted, so a second attempt with the same code fails with `INVALID_RECOVERY_CODE` (401). It's good UX to suggest re-running `setupTwoFactor` after a recovery-code use — that regenerates all 10 codes.
+
+## Security notes
+
+- **TOTP secret is plaintext at rest** by design. Encrypting only this column doesn't meaningfully help if the DB is compromised — passwords are hashed but everything else needs to be readable for the auth flow. If your DB is at risk, encrypt the whole DB (Postgres TDE, AWS RDS encryption, etc.), not one column.
+- **Challenge tokens have a 5-minute TTL.** Long enough for the user to fetch their authenticator, short enough to limit the replay window if a token is intercepted.
+- **Recovery codes are stored as SHA-256 hashes.** A leaked database doesn't expose the raw codes — same property as every other AuthCore token.
+- **Disable requires password re-entry.** Even with a stolen session cookie, an attacker can't turn 2FA off without the password.
+- **No `email_verified` check at enrollment** — if a user can sign in, they can enroll. Apps that need stricter onboarding (e.g. mandatory 2FA before first login) can add their own guard.
+
+## Error codes
+
+| Code | HTTP | Cause |
+|------|------|-------|
+| `TWO_FACTOR_NOT_SET_UP` | 400 | `enableTwoFactor` called before `setupTwoFactor` |
+| `INVALID_TWO_FACTOR_CODE` | 400 / 401 | TOTP code doesn't match (during enable OR verify) |
+| `INVALID_RECOVERY_CODE` | 401 | Recovery code is unknown, expired, or doesn't belong to the challenged user |
+| `INVALID_TOKEN` | 401 | Challenge JWT is invalid, expired, or has the wrong scope |
+| `INVALID_CREDENTIALS` | 401 | `disableTwoFactor` received a wrong password |
+
+## Not yet implemented
+
+- WebAuthn / passkeys (RFC FIDO2). Likely a v1.1 feature.
+- SMS-based 2FA. Intentionally omitted — SMS 2FA has known weaknesses (SIM swap, SS7) and the industry has moved away from it.
+- Backup-codes-as-grid printouts. The current `xxxx-xxxx-xxxx` format renders well in plain text; a print-friendly UI is the responsibility of the app.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/security/email-templates -->
+
+# Email Templates
+
+By default, AuthCore ships sensible plain HTML templates for the three transactional emails: verification, password reset, and invitation. For any real product you'll want to brand them, change the copy, or render them with React Email / MJML / your own engine.
+
+Customize via `EmailConfig.templates`. Each template is a render function: `(ctx) => { subject, html, text }`. Unset templates keep the library defaults.
+
+## Quick example
+
+```ts
+import { createAuth } from '@authcore/express'
+import { resendAdapter } from '@authcore/resend-adapter'
+
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+  features: ['emailVerification', 'passwordReset', 'invitation'],
+  email: {
+    provider: resendAdapter(process.env.RESEND_API_KEY!),
+    from: 'Acme <auth@acme.com>',
+    templates: {
+      resetPassword: ({ email, link, ttlHours }) => ({
+        subject: 'Reset your Acme password',
+        html: `<p>Hi ${email},</p>
+               <p><a href="${link}">Reset your password</a> — link expires in ${ttlHours}h.</p>`,
+        text: `Reset your password: ${link} (expires in ${ttlHours}h)`,
+      }),
+    },
+  },
+})
+```
+
+## Template context
+
+Each template receives a context object specific to its feature:
+
+| Template | Context fields |
+|----------|----------------|
+| `verifyEmail` | `email`, `link`, `ttlHours` (24) |
+| `resetPassword` | `email`, `link`, `ttlHours` (1) |
+| `invitation` | `email`, `link`, `ttlHours` (48), `role` |
+
+`link` is the fully-built URL including the token (`{baseUrl}/{path}?token={raw}`). You should never need to re-build it.
+
+## Using React Email
+
+`@authcore/core` is framework-agnostic — it just calls the function and forwards the result to your `EmailAdapter`. You're free to use any HTML renderer:
+
+```ts
+import { render } from '@react-email/render'
+import ResetPasswordEmail from './emails/ResetPasswordEmail'
+
+email: {
+  provider: resendAdapter(process.env.RESEND_API_KEY!),
+  from: 'Acme <auth@acme.com>',
+  templates: {
+    resetPassword: ({ email, link, ttlHours }) => ({
+      subject: 'Reset your Acme password',
+      html: render(<ResetPasswordEmail email={email} link={link} ttl={ttlHours} />),
+      text: render(<ResetPasswordEmail email={email} link={link} ttl={ttlHours} />, { plainText: true }),
+    }),
+  },
+},
+```
+
+## Extending the defaults
+
+If you only want a small change (e.g. tweak the subject), import the default and spread:
+
+```ts
+import { defaultResetPasswordTemplate } from '@authcore/core'
+
+templates: {
+  resetPassword: (ctx) => ({
+    ...defaultResetPasswordTemplate(ctx),
+    subject: 'Reset your Acme password',  // override just the subject
+  }),
+},
+```
+
+## Internationalization
+
+The render function receives the user's email — derive the user's locale however you want (a lookup in your DB, a default), then branch:
+
+```ts
+templates: {
+  resetPassword: async (ctx) => {
+    const locale = await getLocaleForEmail(ctx.email)  // your code
+    return locale === 'fr' ? frResetEmail(ctx) : enResetEmail(ctx)
+  },
+},
+```
+
+Note: render functions can be `async`. The adapter `await`s them.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/examples/nextjs -->
+
+# Next.js example
+
+End-to-end demo of `@authcore/nextjs` showing every flagship feature in one app: email/password sign-up, login, magic-link, Google OAuth (optional), TOTP 2FA, refresh tokens, CSRF, server-component user reads, and middleware route protection.
+
+**Source:** [`examples/nextjs`](https://github.com/david-ouatedem/auth-core/tree/main/examples/nextjs) in the repo.
+
+## Run it
+
+```bash
+# from the repo root, so workspace packages resolve:
+pnpm install
+pnpm -w run build
+
+# then:
+cd examples/nextjs
+cp .env.example .env.local
+# edit .env.local and set AUTH_SECRET to a strong random string (≥ 32 chars)
+
+pnpm db:init       # creates auth.db (SQLite) with the AuthCore tables
+pnpm dev           # http://localhost:3000
+```
+
+You can immediately:
+
+- **Sign up** with email + password at `/signup`
+- **Sign in** at `/login`
+- **Request a magic link** at `/magic-link` — the link prints to your `pnpm dev` terminal (no email provider needed for local testing)
+- **Enable 2FA** at `/settings`, scan the QR with any authenticator app, then sign out and back in to see the challenge flow
+
+## Optional: Google OAuth
+
+Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.local`. The "Sign in with Google" button appears on `/login`. Configure the **Authorized redirect URI** in Google Cloud Console as `http://localhost:3000/api/auth/oauth/google/callback`.
+
+## What's in each file
+
+```
+app/
+├── api/auth/[...authcore]/route.ts   ← single file = every auth endpoint
+├── page.tsx                          ← landing
+├── signup/page.tsx                   ← email + password registration
+├── login/                            ← password + OAuth + 2FA challenge UI
+│   ├── page.tsx
+│   └── LoginForm.tsx
+├── magic-link/page.tsx               ← passwordless email link request
+├── dashboard/                        ← protected; reads user via getCurrentUser
+│   ├── page.tsx
+│   └── LogoutButton.tsx
+├── settings/                         ← 2FA enrollment + disable
+│   ├── page.tsx
+│   └── TwoFactorSection.tsx
+├── layout.tsx                        ← wraps app in <AuthProvider>
+└── providers.tsx                     ← 'use client' boundary
+
+lib/auth.ts                           ← AuthCore wiring (single source of truth)
+db/                                   ← Drizzle SQLite schema + connection
+middleware.ts                         ← edge-safe cookie presence check
+```
+
+## Architecture highlights
+
+**One catch-all route.** `app/api/auth/[...authcore]/route.ts` re-exports `GET` and `POST` from `lib/auth.ts`. Every AuthCore endpoint — `/register`, `/login`, `/refresh`, `/2fa/verify`, `/oauth/google`, etc. — is served from this single file.
+
+**Server Components read the user with `getCurrentUser`.** No client-side hydration round-trip: the dashboard page is rendered with the user already in hand:
+
+```tsx
+const user = await getCurrentUser()
+if (!user) redirect('/login?next=/dashboard')
+```
+
+**Middleware is edge-safe.** It checks for cookie presence only — no JWT verification at the edge. Real verification happens in Server Components / Route Handlers (where the Node runtime can use `jsonwebtoken`).
+
+**Lazy DB initialization.** `db/index.ts` returns a Proxy that resolves to the real Drizzle DB on first property access — avoids loading the SQLite native module during `next build`'s page-data collection phase.
+
+**Cookie mode + CSRF.** `useCookies: true` keeps the JWT in an `HttpOnly` cookie; `csrf: true` adds a synchronizer-token cookie that `@authcore/core-web` automatically echoes back on every state-changing request.
+
+## Swapping to Postgres
+
+This example uses SQLite for zero-friction setup. To switch:
+
+1. `pnpm add pg @types/pg`
+2. In `db/index.ts`, swap the driver:
+   ```ts
+   const { drizzle } = require('drizzle-orm/node-postgres')
+   const { Pool } = require('pg')
+   _db = drizzle(new Pool({ connectionString: process.env.DATABASE_URL }))
+   ```
+3. In `db/schema.ts`, swap the schema import:
+   ```ts
+   export { users, tokens, oauthAccounts, tokenTypeEnum } from '@authcore/drizzle-adapter/pg'
+   ```
+4. In `lib/auth.ts`, swap `@authcore/drizzle-adapter/sqlite` → `@authcore/drizzle-adapter/pg`.
+
+Same routes, same UI, different backing store.
+
+## See also
+
+- [Configuration reference](/configuration)
+- [Next.js integration guide](/integrations/nextjs)
+- [Drizzle adapter guide](/adapters/drizzle)
+- [OAuth setup](/security/oauth) · [Magic-link](/security/magic-link) · [Two-factor](/security/two-factor)
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/examples/api-only -->
+
+# API-Only Example
+
+Separate Express API backend + React SPA frontend communicating via Bearer token auth.
+
+[View source on GitHub](https://github.com/david-ouatedem/auth-core/tree/main/examples/api-only)
+
+## Architecture
+
+```
+examples/api-only/
+├── backend/    Express + Prisma + @authcore/express (port 3000)
+└── frontend/   Vite + React + @authcore/react mode="api" (port 5173)
+```
+
+- Frontend stores JWT in localStorage
+- API requests include `Authorization: Bearer <token>` header
+- CORS enabled on backend for `http://localhost:5173`
+
+## Setup
+
+### Backend
+
+```bash
+cd examples/api-only/backend
+cp .env.example .env
+pnpm install
+pnpm db:push
+pnpm dev
+```
+
+### Frontend
+
+```bash
+cd examples/api-only/frontend
+cp .env.example .env
+pnpm install
+pnpm dev
+```
+
+## Key Code
+
+**Backend** — [backend/src/index.ts](https://github.com/david-ouatedem/auth-core/blob/main/examples/api-only/backend/src/index.ts)
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET! },
+})
+
+app.use('/auth', auth.router())
+app.get('/api/me', auth.middleware(), (req, res) => {
+  res.json({ user: req.user })
+})
+```
+
+**Frontend** — [frontend/src/App.tsx](https://github.com/david-ouatedem/auth-core/blob/main/examples/api-only/frontend/src/App.tsx)
+
+```tsx
+<AuthProvider baseUrl={`${API_URL}/auth`} mode="api">
+  <AppContent />
+</AuthProvider>
+```
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/examples/monorepo -->
+
+# Monorepo Example
+
+Express backend + React frontend in a single project, using cookie-based auth.
+
+[View source on GitHub](https://github.com/david-ouatedem/auth-core/tree/main/examples/monorepo)
+
+## Architecture
+
+```
+examples/monorepo/
+├── server/    Express + Prisma + @authcore/express with useCookies (port 3000)
+└── client/    Vite + React + @authcore/react mode="cookie" (port 5173)
+```
+
+- Vite dev server proxies `/auth` and `/api` to backend
+- In production, Express serves the built client SPA
+- Auth uses httpOnly cookies — no token in localStorage
+
+## Setup
+
+```bash
+cd examples/monorepo
+cp .env.example .env
+
+cd server && pnpm install && pnpm db:push && cd ..
+cd client && pnpm install && cd ..
+```
+
+Run in two terminals:
+
+```bash
+pnpm dev:server    # Express on :3000
+pnpm dev:client    # Vite on :5173 with proxy
+```
+
+## Key Code
+
+**Server** — cookie-based auth:
+
+```ts
+app.use('/auth', auth.router({ useCookies: true }))
+```
+
+The template uses the default `authcore_token` cookie name. To customize, put it on `session.cookieName` so both `auth.router()` and `auth.middleware()` agree:
+
+```ts
+const auth = createAuth({
+  db: prismaAdapter(prisma),
+  session: { strategy: 'jwt', secret: process.env.AUTH_SECRET!, cookieName: 'my_token' },
+})
+```
+
+**Client** — cookie mode (no token management needed):
+
+```tsx
+<AuthProvider baseUrl="/auth" mode="cookie">
+  <AppContent />
+</AuthProvider>
+```
+
+**Vite proxy** — routes auth requests to backend during dev:
+
+```ts
+server: {
+  proxy: {
+    '/auth': 'http://localhost:3000',
+    '/api': 'http://localhost:3000',
+  },
+}
+```
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/examples/frontend-only -->
+
+# Frontend-Only Example
+
+A standalone React SPA that connects to any auth API — AuthCore-powered or not.
+
+[View source on GitHub](https://github.com/david-ouatedem/auth-core/tree/main/examples/frontend-only)
+
+## Architecture
+
+```
+examples/frontend-only/
+└── Vite + React + @authcore/react mode="api"
+```
+
+- Points to a configurable external API URL via `VITE_API_URL`
+- Token stored in localStorage
+- Works with any backend via response transformers
+
+## Setup
+
+```bash
+cd examples/frontend-only
+cp .env.example .env
+# Set VITE_API_URL to your API base URL
+
+pnpm install
+pnpm dev
+```
+
+## When to Use
+
+- You already have a deployed API (AuthCore or custom)
+- You want to build a frontend against a shared staging API
+- You want to test the React SDK without running a local backend
+
+## Connecting to a Custom Backend
+
+If your backend is not AuthCore-based, use the transformer props to adapt the response shapes. See [Custom Backend Integration](../integrations/react.md#custom-backend-integration) for full examples.
+
+
+---
+
+<!-- https://david-ouatedem.github.io/auth-core/migration/0.x-to-1.0 -->
+
+# Migrating from 0.x to 1.0
+
+This guide walks through every breaking change accumulated between 0.10 and 1.0, organized so you can skim for the bits that affect you.
+
+If you're on 0.10 or 0.11, you can adopt 0.12 today — same migration applies. The 1.0 tag will be the version with no further breaking changes planned, not a code rewrite.
+
+## Skip ahead
+
+- [Schema changes (Prisma users)](#schema-changes-prisma)
+- [Schema changes (Drizzle users)](#schema-changes-drizzle)
+- [Login return-type change](#login-discriminated-union)
+- [DatabaseAdapter new methods (custom adapters only)](#databaseadapter-additions)
+- [`User` interface changes](#user-interface)
+- [`auth.forgotPassword` requires `resetUrl` (direct-core callers)](#forgotpassword-resety)
+- [Coming from Lucia](#coming-from-lucia)
+- [Coming from NextAuth / Auth.js](#coming-from-nextauth)
+
+---
+
+## Schema changes (Prisma) {#schema-changes-prisma}
+
+Three schema migrations between 0.10 and 1.0 — bundle them into a single `db:push` after upgrading:
+
+```diff
+ model User {
+   id            String   @id @default(uuid())
+   email         String   @unique
+   passwordHash  String
+   emailVerified Boolean  @default(false)
+   role          String   @default("user")
++  twoFactorEnabled Boolean @default(false)
++  twoFactorSecret  String?
+   createdAt     DateTime @default(now())
+   updatedAt     DateTime @updatedAt
+   tokens        Token[]
++  oauthAccounts OAuthAccount[]
+ }
+
++model OAuthAccount {
++  id                String    @id @default(uuid())
++  userId            String
++  provider          String
++  providerAccountId String
++  accessToken       String
++  refreshToken      String?
++  expiresAt         DateTime?
++  createdAt         DateTime  @default(now())
++  updatedAt         DateTime  @updatedAt
++  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
++
++  @@unique([provider, providerAccountId])
++  @@index([userId])
++}
+
+ enum TokenType {
+   EMAIL_VERIFICATION
+   PASSWORD_RESET
+   SESSION
+   INVITATION
++  REFRESH
++  MAGIC_LINK
++  RECOVERY_CODE
+ }
+```
+
+Apply with:
+
+```bash
+pnpm --filter @authcore/prisma-adapter db:push
+# or generate a migration if you're using `prisma migrate`:
+pnpm exec prisma migrate dev --name authcore-1-0
+```
+
+All existing data stays — these are additive changes (new columns get defaults, new enum values widen the type).
+
+## Schema changes (Drizzle) {#schema-changes-drizzle}
+
+If you adopted `@authcore/drizzle-adapter` after 0.12, you're already on the final schema. The bundled tables (`users`, `tokens`, `oauth_accounts`) include every field. Re-export them from your schema and `drizzle-kit generate` produces the right SQL:
+
+```ts
+export { users, tokens, oauthAccounts, tokenTypeEnum } from '@authcore/drizzle-adapter/pg'
+// or '/sqlite' — same fields, dialect-specific column types
+```
+
+## Login return-type change (potentially breaking for everyone) {#login-discriminated-union}
+
+`auth.login()` previously returned `{ user, token, refreshToken }` unconditionally. As of 0.12 it returns a **discriminated union** so 2FA-enabled users get a challenge instead of a half-session:
+
+```ts
+type LoginResult = SessionResult | TwoFactorChallengeResult
+
+interface SessionResult { user: PublicUser; token: string; refreshToken: string }
+interface TwoFactorChallengeResult { requires2FA: true; challengeToken: string }
+```
+
+If no user in your app has 2FA enabled, behavior is identical at runtime. Type-wise, existing code like:
+
+```ts
+// Before
+const { user, token } = await auth.login(body)
+```
+
+…now fails to type-check. Narrow first:
+
+```ts
+// After
+const result = await auth.login(body)
+if ('requires2FA' in result) {
+  return reply.send({ requires2FA: true, challengeToken: result.challengeToken })
+}
+const { user, token, refreshToken } = result
+```
+
+**Framework adapter users (Express/Fastify/NestJS/Next.js): nothing to do.** The bundled adapters already handle both branches and pass the challenge through to the client transparently.
+
+**Direct core callers (rare):** update your `login()` consumers to narrow on the union. Recipe above.
+
+## DatabaseAdapter additions (custom adapters only) {#databaseadapter-additions}
+
+If you wrote your own DB adapter, four new methods are required since 0.10:
+
+```ts
+interface DatabaseAdapter {
+  // …existing…
+
+  // 0.10:
+  deleteTokensByUserAndType(userId: string, type: TokenType): Promise<void>
+
+  // 0.11:
+  findOAuthAccount(provider: string, providerAccountId: string): Promise<OAuthAccount | null>
+  createOAuthAccount(data: CreateOAuthAccountInput): Promise<OAuthAccount>
+  updateOAuthAccount(
+    id: string,
+    data: Partial<Pick<OAuthAccount, 'accessToken' | 'refreshToken' | 'expiresAt'>>,
+  ): Promise<OAuthAccount>
+}
+```
+
+If your app doesn't use OAuth, the three OAuth methods can throw `new Error('OAuth not configured')` — AuthCore never calls them unless `config.oauth` is set.
+
+The `User` interface also gained `twoFactorEnabled: boolean` and `twoFactorSecret: string | null`. Your `findUserBy*` queries need to return these fields; your `updateUser` needs to accept them.
+
+The `TokenType` union gained `'REFRESH' | 'MAGIC_LINK' | 'RECOVERY_CODE'`. Any switch/exhaustiveness check on `Token.type` will fail to compile until you add cases.
+
+## User interface {#user-interface}
+
+```ts
+interface User {
+  // …existing…
+  twoFactorEnabled: boolean    // 0.12+
+  twoFactorSecret: string | null  // 0.12+
+}
+
+type PublicUser = Omit<User, 'passwordHash' | 'twoFactorSecret'>
+```
+
+`PublicUser` now exposes `twoFactorEnabled` (clients need it for "is 2FA on?" UI) but still hides `twoFactorSecret`. If you're using `useAuth<MyUser>()` with a custom user shape, extend your type accordingly.
+
+## `auth.forgotPassword` requires `resetUrl` (direct core callers) {#forgotpassword-resety}
+
+Was breaking in 0.9. Re-listed here because it's the most common gotcha for people upgrading from <0.9:
+
+```ts
+// Before 0.9 — implicit URL, leaked AUTH_SECRET into emails (CVE)
+await auth.forgotPassword({ email })
+
+// 0.9 onwards — explicit URL required
+await auth.forgotPassword({ email }, { resetUrl: `${baseUrl}/reset-password` })
+```
+
+Framework adapter users aren't affected — every adapter supplies the URL automatically.
+
+If you ran 0.5–0.8 with `passwordReset` enabled in production: **rotate `AUTH_SECRET` immediately**. Old reset emails contained the JWT signing secret in plaintext. See `SECURITY.md` "Known Past Issues".
+
+## Coming from Lucia {#coming-from-lucia}
+
+[Lucia](https://lucia-auth.com) is winding down in 2025. AuthCore covers most of its territory:
+
+| Lucia concept | AuthCore equivalent |
+|---|---|
+| `lucia.createSession()` | `auth.login()` — returns a JWT, not a session row |
+| `lucia.validateSession()` | `auth.verifyToken(jwt)` |
+| `lucia.invalidateSession()` | `auth.revoke(refreshToken)` |
+| `lucia.invalidateUserSessions()` | `auth.revokeAll(userId)` |
+| Session-based auth (DB session row) | AuthCore uses JWT + refresh tokens by default. Same security properties: refresh rotation invalidates stolen tokens on next use; `revokeAll` is a global kill switch. |
+| `Lucia` instance | `createAuth({ … })` |
+| Provider plugins (`@lucia-auth/oauth`) | `oauth: { google, github, … }` config field with bundled providers |
+
+**The biggest difference:** Lucia stores sessions in the database; AuthCore uses JWT access tokens + a refresh-token table. If you have an existing Lucia DB with a `sessions` table, you don't have to migrate the data — old sessions will simply expire on their own. New sign-ins go through AuthCore.
+
+The recommended migration path:
+1. Add AuthCore alongside Lucia (mount on `/api/auth-v2` initially).
+2. Have new sign-ins go through AuthCore.
+3. Old Lucia sessions keep working until they expire.
+4. After your max-Lucia-session-TTL has passed, remove Lucia.
+
+## Coming from NextAuth / Auth.js {#coming-from-nextauth}
+
+NextAuth covers a much bigger surface than AuthCore (80+ providers, role-based adapters, etc.). The migration is more involved — most users will keep NextAuth if they're happy with it.
+
+**If you're moving because you want code-not-config:** AuthCore lets you build the auth flow yourself with primitives (`auth.login`, `auth.verifyTwoFactor`, etc.). You write your own forms, pages, and email templates instead of using NextAuth's pre-built ones.
+
+**If you're moving because you want fewer dependencies:** AuthCore's core has 3 runtime deps (`bcryptjs`, `jsonwebtoken`, `zod`); NextAuth's has more.
+
+**If you're moving because of bundle size on Edge:** AuthCore's middleware is presence-only and edge-compatible; route handlers run on Node. NextAuth has been working toward edge compatibility too — check if you actually have a measurable problem first.
+
+**Database compatibility:** NextAuth uses tables like `users`, `accounts`, `sessions`, `verification_tokens`. AuthCore uses `users`, `tokens`, `oauth_accounts`. Migrating data is mostly straightforward (one-to-one row-level translation), but the OAuth account → user joining works differently — AuthCore links on email at first sign-in only.
+
+## Coming from Clerk / Auth0
+
+You're moving from a hosted service to self-hosted. Things to plan for:
+
+- **Email delivery is your problem now.** Pick `@authcore/resend-adapter` (~$20/mo for 50k emails) or `@authcore/nodemailer-adapter` (any SMTP, including Mailgun/SendGrid).
+- **No hosted UI**. AuthCore is headless — you build the forms. Tradeoff: full control over branding/UX, no $25/MAU bill.
+- **No social login config UI**. You register OAuth apps yourself at Google/GitHub/etc., put the credentials in env vars.
+- **No prebuilt rate limiting / IP allowlists / impossible-travel detection.** Wire your own via `callbacks.onFailedLogin` + your own metrics.
+- **No SAML / SCIM / enterprise SSO** built in. Build on top of OAuth or wait for a community plugin.
+
+The break-even is usually around 1,000 MAU. Below that, hosted services are still cheaper than your time.
+
+## Version cheat sheet
+
+| Version | Highlights | Breaking? |
+|---|---|---|
+| **0.9** | AUTH_SECRET leak fix, cookie-name threading, NestJS 401 | Direct core callers of `forgotPassword` |
+| **0.10** | Refresh tokens, CSRF, email templates, callbacks | `DatabaseAdapter.deleteTokensByUserAndType` required |
+| **0.11** | OAuth + PKCE (5 providers), Magic-link, Next.js adapter, Drizzle adapter | OAuthAccount table; three new DB adapter methods |
+| **0.12** | 2FA (TOTP) + recovery codes | `User.twoFactorEnabled/Secret`; `login()` returns discriminated union |
+| **1.0** | Stability declaration. No new breaking changes planned. | None — 1.0 is the same code as 0.12 with the stability commitment. |
+
+## Got stuck?
+
+[Open an issue](https://github.com/david-ouatedem/auth-core/issues) with your starting version, the error, and a tiny repro. Migration friction is a real bug — we'd rather fix the path than leave you stuck.

@@ -1,7 +1,7 @@
 {
   "name": "@authcore/core",
   "version": "0.12.0",
-  "description": "Framework-agnostic authentication core for AuthCore",
+  "description": "Self-hosted authentication for Node.js: register/login, JWT + rotating refresh tokens, email verification, password reset, invitations, magic links, OAuth and TOTP 2FA. Framework-agnostic core with a published threat model.",
   "license": "MIT",
   "author": "David Ouatedem",
   "repository": {
@@ -14,11 +14,25 @@
     "authentication",
     "authcore",
     "jwt",
-    "bcrypt"
+    "bcrypt",
+    "typescript",
+    "refresh-token",
+    "oauth",
+    "2fa",
+    "totp",
+    "magic-link",
+    "rbac",
+    "csrf",
+    "password-reset",
+    "email-verification",
+    "devise",
+    "nodejs",
+    "self-hosted"
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -50,5 +64,9 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "@authcore/nextjs",
   "version": "0.12.0",
-  "description": "Next.js (App Router) adapter for AuthCore",
+  "description": "Next.js App Router authentication: one catch-all route handler, getCurrentUser() for Server Components, and edge middleware (AuthCore)",
   "license": "MIT",
   "author": "David Ouatedem",
   "repository": {
@@ -14,11 +14,18 @@
     "authcore",
     "nextjs",
     "next",
-    "app-router"
+    "app-router",
+    "authentication",
+    "jwt",
+    "typescript",
+    "server-components",
+    "middleware",
+    "edge"
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -67,5 +74,9 @@
     "react-dom": "^19.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
   }
 }

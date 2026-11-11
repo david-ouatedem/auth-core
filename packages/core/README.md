@@ -1,8 +1,28 @@
 # @authcore/core
 
-> Framework-agnostic authentication engine. Types, validation, password hashing, JWT, and adapter interfaces.
+> Self-hosted, security-first authentication engine for Node.js: register/login, JWT with rotating refresh tokens, email verification, password reset, invitations, magic links, OAuth and TOTP 2FA.
 
-This is the core package that powers all AuthCore framework adapters. You typically won't use it directly. Use [`@authcore/express`](https://www.npmjs.com/package/@authcore/express) or [`@authcore/fastify`](https://www.npmjs.com/package/@authcore/fastify) instead.
+[![npm](https://img.shields.io/npm/v/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
+[![npm downloads](https://img.shields.io/npm/dw/@authcore/core)](https://www.npmjs.com/package/@authcore/core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/david-ouatedem/auth-core/blob/main/LICENSE)
+
+**[Docs](https://david-ouatedem.github.io/auth-core/)** · **[Threat model](https://david-ouatedem.github.io/auth-core/security/threat-model)** · **[Compare](https://david-ouatedem.github.io/auth-core/compare)** · **[GitHub](https://github.com/david-ouatedem/auth-core)**
+
+This is the framework-agnostic engine behind every AuthCore adapter. Pick the entry point that fits your stack:
+
+| You use | Install |
+|---------|---------|
+| Express | `npm i @authcore/express @authcore/prisma-adapter` |
+| Fastify | `npm i @authcore/fastify @fastify/cookie @authcore/prisma-adapter` |
+| NestJS | `npm i @authcore/nestjs @authcore/prisma-adapter` |
+| Next.js (App Router) | `npm i @authcore/nextjs @authcore/core @authcore/prisma-adapter` |
+| Anything else / scripts | `npm i @authcore/core @authcore/prisma-adapter` (this package) |
+
+Or scaffold a working app: `npx create-authcore-app`.
+
+Use `@authcore/core` directly when you have no adapter for your framework, are writing tests, or want to build custom routes. Everything the adapters do is a thin wrapper over `createAuth` below.
+
+**Using an AI coding assistant?** Read [`AGENTS.md`](./AGENTS.md) (shipped in this package) or point it at [`llms.txt`](https://david-ouatedem.github.io/auth-core/llms.txt).
 
 ## Install
 

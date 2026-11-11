@@ -1,7 +1,7 @@
 {
   "name": "@authcore/nestjs",
   "version": "0.12.0",
-  "description": "NestJS adapter for AuthCore. Dynamic module, guards, and decorators.",
+  "description": "NestJS authentication module with AuthGuard, RolesGuard and decorators: JWT, refresh tokens, email verification, password reset, OAuth and 2FA (AuthCore)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -63,6 +65,13 @@
     "nest",
     "guard",
     "rbac",
-    "jwt"
-  ]
+    "jwt",
+    "authcore",
+    "typescript",
+    "decorator"
+  ],
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
+  }
 }

@@ -3,7 +3,7 @@
 ## What This Project Is
 
 AuthCore is a Devise-inspired, framework-agnostic authentication library for the JS ecosystem.
-It is a **pnpm monorepo** containing 11 npm packages plus three scaffold templates, a VitePress docs site, and three example apps.
+It is a **pnpm monorepo** (pnpm 11) containing 13 packages under `packages/` (all versioned 0.12.0 via Changesets), three scaffold templates, a VitePress docs site, and four example apps.
 
 ## Package Dependency Graph
 
@@ -13,11 +13,13 @@ It is a **pnpm monorepo** containing 11 npm packages plus three scaffold templat
     ├── @authcore/core         (server core — bcryptjs, jsonwebtoken, zod)
     │       ↑
     │       ├── @authcore/prisma-adapter      (peerDep: @prisma/client)
+    │       ├── @authcore/drizzle-adapter     (peerDep: drizzle-orm >=0.30 <0.40; Postgres + SQLite)
     │       ├── @authcore/resend-adapter      (dep: resend)
     │       ├── @authcore/nodemailer-adapter  (dep: nodemailer)
     │       ├── @authcore/express             (peerDep: express)
     │       ├── @authcore/fastify             (peerDep: fastify, @fastify/cookie)
-    │       └── @authcore/nestjs              (peerDeps: @nestjs/common, @nestjs/core, reflect-metadata)
+    │       ├── @authcore/nestjs              (peerDeps: @nestjs/common, @nestjs/core, reflect-metadata)
+    │       └── @authcore/nextjs              (peerDeps: next ^13.4 || ^14 || ^15, react; App Router handler + middleware)
     │
     └── @authcore/core-web     (framework-agnostic web auth service, native fetch only)
             ↑
@@ -32,20 +34,23 @@ create-authcore-app           (CLI scaffolder; standalone)
 auth-core/
 ├── packages/
 │   ├── types/              @authcore/types — User, Token, adapter interfaces, AuthCoreConfig, SessionConfig
-│   ├── core/               @authcore/core — createAuth factory, features (emailVerification, passwordReset, invitation)
+│   ├── core/               @authcore/core — createAuth factory, features (emailVerification, passwordReset, invitation, magicLink, twoFactor, oauth, refresh, templates)
 │   ├── core-web/           @authcore/core-web — AuthWebService class for browser auth (api/cookie modes)
 │   ├── prisma-adapter/     @authcore/prisma-adapter — Prisma DatabaseAdapter (supports Prisma 5 and 6)
+│   ├── drizzle-adapter/    @authcore/drizzle-adapter — Drizzle DatabaseAdapter (pg/ and sqlite/ variants)
 │   ├── resend-adapter/     @authcore/resend-adapter — Resend EmailAdapter
 │   ├── nodemailer-adapter/ @authcore/nodemailer-adapter — SMTP EmailAdapter via nodemailer
 │   ├── express/            @authcore/express — Express Router + middleware (Bearer or cookie)
 │   ├── fastify/            @authcore/fastify — Fastify plugin + preHandler hooks
 │   ├── nestjs/             @authcore/nestjs — Dynamic module, AuthGuard, RolesGuard, decorators
+│   ├── nextjs/             @authcore/nextjs — App Router route handler, createAuthMiddleware (cookie-presence check), server/client helpers
 │   ├── react/              @authcore/react — AuthProvider, useAuth, ProtectedRoute, useRole/useHasRole
 │   └── create-authcore-app/ CLI: scaffolds api-only, monorepo, or frontend-only templates
 ├── docs/                   VitePress site (deployed to GitHub Pages)
-├── examples/               api-only, monorepo, frontend-only working apps
+├── examples/               api-only, monorepo, frontend-only, nextjs working apps (only examples/nextjs is a workspace member)
 ├── memory/                 Project-local Claude memory (MEMORY.md + topic files)
-├── pnpm-workspace.yaml
+├── pnpm-workspace.yaml     Workspace globs + `allowBuilds` (pnpm 11 build-script allowlist)
+├── .changeset/             Changesets config (versioning/release)
 ├── tsconfig.base.json      Shared strict TS config (ES2022, NodeNext)
 ├── vitest.config.ts        Workspace vitest, fileParallelism: false + singleFork (shared Postgres)
 ├── docker-compose.yml      Postgres 16 on port 5433 for integration tests
@@ -78,6 +83,7 @@ auth-core/
 | Refresh tokens      | Always on (0.10+)                 | 30d | `/refresh`, `/revoke` routes; rotated on every use; `auth.revokeAll(userId)` for log-out-everywhere |
 | CSRF (cookie mode)  | `session.csrf: true` (opt-in)     | n/a | Synchronizer token cookie + `X-CSRF-Token` header on state-changing requests |
 | Email templates     | `email.templates: { ... }`        | n/a | Per-feature render functions; defaults preserved when unset |
+| Magic link, 2FA, OAuth | see `packages/core/src/features/{magicLink,twoFactor,oauth}.ts` | n/a | OAuth providers in `packages/core/src/oauth/` (google, github, discord, microsoft, apple). Check the docs/source for exact config before relying on details |
 
 ## Commands to Resume Work
 
@@ -85,8 +91,12 @@ auth-core/
 # Install all deps
 pnpm install
 
-# Build all packages (types → core/core-web → adapters → frameworks → react → cli)
+# Build all packages (types → core/core-web → adapters → frameworks → react → nextjs → cli)
+# Required before tests: packages import each other via dist/
 pnpm -w run build
+
+# Typecheck every package
+pnpm -w run lint
 
 # Run all tests (unit + integration; integration skips if no DB)
 pnpm -w run test
@@ -98,9 +108,12 @@ pnpm --filter @authcore/express test
 pnpm --filter @authcore/fastify test
 pnpm --filter @authcore/nestjs test
 pnpm --filter @authcore/react test
+pnpm --filter @authcore/nextjs test
+pnpm --filter @authcore/drizzle-adapter test
 
 # Start Postgres for integration tests
 docker compose up -d
+pnpm --filter @authcore/prisma-adapter db:generate   # generate Prisma client (needed for prisma-adapter tests/build)
 pnpm --filter @authcore/prisma-adapter db:push
 
 # Stop Postgres
@@ -117,6 +130,12 @@ pnpm docs:build  # production build for Pages
 cp .env.example .env
 # Edit .env with real DATABASE_URL and AUTH_SECRET (≥32 chars)
 ```
+
+## pnpm 11 Notes
+
+- Dependency build scripts must be allowlisted in `pnpm-workspace.yaml` under `allowBuilds` (currently `@nestjs/core`, `@prisma/client`, `@prisma/engines`, `better-sqlite3`, `esbuild`, `prisma`, `sharp` → `true`). After a fresh `pnpm install`, run `pnpm approve-builds --all` if pnpm reports ignored builds.
+- The `pnpm.onlyBuiltDependencies` field in root `package.json` is no longer read by pnpm 11 (it triggers a warning on every command); `allowBuilds` replaces it.
+- Without `DATABASE_URL`, the 5 integration test files (~127 tests) are skipped; the remaining ~289 tests pass.
 
 ## Testing Rules (Always Follow These)
 

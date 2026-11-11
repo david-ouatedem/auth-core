@@ -1,7 +1,7 @@
 {
   "name": "@authcore/nodemailer-adapter",
   "version": "0.12.0",
-  "description": "Nodemailer email adapter for AuthCore",
+  "description": "Nodemailer (SMTP) email adapter for AuthCore (verification, reset, invitation, magic-link emails)",
   "author": "David Ouatedem",
   "repository": {
     "type": "git",
@@ -13,7 +13,10 @@
     "authcore",
     "nodemailer",
     "email",
-    "smtp"
+    "smtp",
+    "authentication",
+    "jwt",
+    "typescript"
   ],
   "publishConfig": {
     "access": "public"
@@ -49,5 +52,9 @@
     "dist",
     "README.md"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://david-ouatedem.github.io/auth-core/",
+  "bugs": {
+    "url": "https://github.com/david-ouatedem/auth-core/issues"
+  }
 }
